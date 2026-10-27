@@ -4,6 +4,8 @@
 #include "utils/Log.h"
 
 #include <algorithm>
+#include <cstring>
+#include <fstream>
 
 namespace tpbr
 {
@@ -290,34 +292,225 @@ bool DDSUtils::loadDDS(const std::filesystem::path& path, int& width, int& heigh
 
 // ─── loadDDSAtMaxSize ──────────────────────────────────────
 
+namespace
+{
+
+/// Size in bytes of the DDS container header (magic + DDS_HEADER [+ DDS_HEADER_DXT10]).
+bool ddsHeaderSize(std::ifstream& in, size_t& headerSize)
+{
+    char magic[4] = {};
+    in.seekg(0, std::ios::beg);
+    if (!in.read(magic, 4))
+        return false;
+    if (std::memcmp(magic, "DDS ", 4) != 0)
+        return false;
+
+    // dwFourCC lives at file offset 84 (4 magic + 80 into DDS_HEADER).
+    char fourCC[4] = {};
+    in.seekg(84, std::ios::beg);
+    if (!in.read(fourCC, 4))
+        return false;
+
+    headerSize = (std::memcmp(fourCC, "DX10", 4) == 0) ? 148 : 128;
+    return true;
+}
+
+/// Read only the bytes of one mip level out of a DDS file.
+/// Returns false when the container is not the simple 2D single-surface case, in which case the
+/// caller must fall back to a full load.
+bool extractMipBytes(std::ifstream& in, size_t headerSize, const DirectX::TexMetadata& md, size_t targetMip,
+                     std::vector<uint8_t>& out, size_t& rowPitch, size_t& slicePitch)
+{
+    if (md.arraySize != 1 || md.depth != 1 || (md.miscFlags & DirectX::TEX_MISC_TEXTURECUBE) != 0)
+        return false;
+    if (targetMip >= md.mipLevels)
+        return false;
+
+    size_t offset = headerSize;
+    for (size_t mip = 0; mip < targetMip; ++mip)
+    {
+        const size_t mipW = std::max<size_t>(1, md.width >> mip);
+        const size_t mipH = std::max<size_t>(1, md.height >> mip);
+        size_t rowBytes = 0;
+        size_t sliceBytes = 0;
+        if (FAILED(DirectX::ComputePitch(md.format, mipW, mipH, rowBytes, sliceBytes)))
+            return false;
+        offset += sliceBytes;
+    }
+
+    // Guard against files whose rows are padded differently from the canonical pitch: only trust the
+    // computed offsets when the header plus every mip accounts for the file exactly.
+    {
+        size_t expected = headerSize;
+        for (size_t mip = 0; mip < md.mipLevels; ++mip)
+        {
+            const size_t mipW = std::max<size_t>(1, md.width >> mip);
+            const size_t mipH = std::max<size_t>(1, md.height >> mip);
+            size_t rowBytes = 0;
+            size_t sliceBytes = 0;
+            if (FAILED(DirectX::ComputePitch(md.format, mipW, mipH, rowBytes, sliceBytes)))
+                return false;
+            expected += sliceBytes;
+        }
+        in.seekg(0, std::ios::end);
+        const size_t actual = static_cast<size_t>(in.tellg());
+        in.clear();
+        if (expected != actual)
+            return false;
+    }
+
+    const size_t mipW = std::max<size_t>(1, md.width >> targetMip);
+    const size_t mipH = std::max<size_t>(1, md.height >> targetMip);
+    if (FAILED(DirectX::ComputePitch(md.format, mipW, mipH, rowPitch, slicePitch)))
+        return false;
+
+    in.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
+    if (!in)
+        return false;
+
+    out.resize(slicePitch);
+    if (!in.read(reinterpret_cast<char*>(out.data()), static_cast<std::streamsize>(slicePitch)))
+        return false;
+
+    return true;
+}
+
+/// Decompress one already-extracted mip and convert it to RGBA8 rows.
+bool decodeSingleMip(const DirectX::TexMetadata& md, size_t mip, std::vector<uint8_t>& mipBytes, size_t rowPitch,
+                     size_t slicePitch, int& width, int& height, std::vector<uint8_t>& rgbaPixels)
+{
+    const size_t mipW = std::max<size_t>(1, md.width >> mip);
+    const size_t mipH = std::max<size_t>(1, md.height >> mip);
+
+    DirectX::Image image{};
+    image.width = mipW;
+    image.height = mipH;
+    image.format = md.format;
+    image.rowPitch = rowPitch;
+    image.slicePitch = slicePitch;
+    image.pixels = mipBytes.data();
+
+    DirectX::TexMetadata oneMip = md;
+    oneMip.width = mipW;
+    oneMip.height = mipH;
+    oneMip.mipLevels = 1;
+    oneMip.arraySize = 1;
+    oneMip.depth = 1;
+    oneMip.miscFlags &= ~DirectX::TEX_MISC_TEXTURECUBE;
+
+    // Decompress if needed (BC formats), leaving the result in `current`
+    DirectX::ScratchImage decompressed;
+    const DirectX::Image* current = &image;
+
+    if (DirectX::IsCompressed(image.format))
+    {
+        DirectX::ScratchImage scratchForDecompress;
+        // Wrap the single mip in a ScratchImage so Decompress can consume it uniformly.
+        HRESULT hr = scratchForDecompress.InitializeFromImage(image);
+        if (FAILED(hr))
+            return false;
+        hr = DirectX::Decompress(scratchForDecompress.GetImages(), scratchForDecompress.GetImageCount(),
+                                 scratchForDecompress.GetMetadata(), DXGI_FORMAT_UNKNOWN, decompressed);
+        if (FAILED(hr))
+            return false;
+        current = decompressed.GetImage(0, 0, 0);
+    }
+
+    if (!current || !current->pixels)
+        return false;
+
+    const DXGI_FORMAT targetRGBAFormat = preferredRGBAFormat(current->format);
+
+    DirectX::ScratchImage converted;
+    if (current->format != targetRGBAFormat)
+    {
+        DirectX::ScratchImage source;
+        HRESULT hr = source.InitializeFromImage(*current);
+        if (FAILED(hr))
+            return false;
+        hr = DirectX::Convert(source.GetImages(), source.GetImageCount(), source.GetMetadata(), targetRGBAFormat,
+                              DirectX::TEX_FILTER_DEFAULT, DirectX::TEX_THRESHOLD_DEFAULT, converted);
+        if (FAILED(hr))
+            return false;
+        current = converted.GetImage(0, 0, 0);
+        if (!current || !current->pixels)
+            return false;
+    }
+
+    width = static_cast<int>(current->width);
+    height = static_cast<int>(current->height);
+    const size_t dstRowPitch = static_cast<size_t>(width) * 4;
+    rgbaPixels.resize(dstRowPitch * height);
+    for (int y = 0; y < height; ++y)
+    {
+        std::memcpy(rgbaPixels.data() + static_cast<size_t>(y) * dstRowPitch,
+                    current->pixels + static_cast<size_t>(y) * current->rowPitch, dstRowPitch);
+    }
+
+    return true;
+}
+
+} // namespace
+
 bool DDSUtils::loadDDSAtMaxSize(const std::filesystem::path& path, int maxSize, int& width, int& height,
                                 std::vector<uint8_t>& rgbaPixels)
 {
     DirectX::TexMetadata metadata{};
-    DirectX::ScratchImage scratch;
 
-    HRESULT hr = DirectX::LoadFromDDSFile(toWide(path).c_str(), DirectX::DDS_FLAGS_NONE, &metadata, scratch);
-
+    // Header only: no pixel data is read or decompressed yet.
+    HRESULT hr = DirectX::GetMetadataFromDDSFile(toWide(path).c_str(), DirectX::DDS_FLAGS_NONE, metadata);
     if (FAILED(hr))
     {
-        spdlog::error("loadDDSAtMaxSize: failed to load {} (0x{:08X})", path.string(), static_cast<unsigned>(hr));
+        spdlog::error("loadDDSAtMaxSize: failed to read header {} (0x{:08X})", path.string(),
+                      static_cast<unsigned>(hr));
         return false;
     }
 
-    // Select the mip level closest to maxSize (without going below it, unless we must)
+    // Pick the smallest mip that is still >= maxSize (mip 0 if it already fits).
     size_t selectedMip = 0;
     if (maxSize > 0 && metadata.mipLevels > 1)
     {
         for (size_t mip = 0; mip < metadata.mipLevels; ++mip)
         {
-            size_t mipW = std::max<size_t>(1, metadata.width >> mip);
-            size_t mipH = std::max<size_t>(1, metadata.height >> mip);
-            size_t maxDim = std::max(mipW, mipH);
-
+            const size_t mipW = std::max<size_t>(1, metadata.width >> mip);
+            const size_t mipH = std::max<size_t>(1, metadata.height >> mip);
             selectedMip = mip;
-            if (maxDim <= static_cast<size_t>(maxSize))
+            if (std::max(mipW, mipH) <= static_cast<size_t>(maxSize))
                 break;
         }
+    }
+
+    // Fast path: read and decompress only the selected mip. On a mip-chained 8K BC7 this touches
+    // 1/16th of the file instead of all of it, which is the difference between a snappy preview and
+    // a multi-second stall.
+    if (selectedMip > 0)
+    {
+        std::ifstream in(path, std::ios::binary);
+        size_t headerSize = 0;
+        if (in && ddsHeaderSize(in, headerSize))
+        {
+            std::vector<uint8_t> mipBytes;
+            size_t rowPitch = 0;
+            size_t slicePitch = 0;
+            if (extractMipBytes(in, headerSize, metadata, selectedMip, mipBytes, rowPitch, slicePitch) &&
+                decodeSingleMip(metadata, selectedMip, mipBytes, rowPitch, slicePitch, width, height, rgbaPixels))
+            {
+                spdlog::debug("loadDDSAtMaxSize: {} mip {} ({}x{}, requested max {}) [single-mip]",
+                              path.string(), selectedMip, width, height, maxSize);
+                return true;
+            }
+        }
+        // Fall through to the full-load path below if anything about the container was unexpected.
+    }
+
+    DirectX::ScratchImage scratch;
+
+    hr = DirectX::LoadFromDDSFile(toWide(path).c_str(), DirectX::DDS_FLAGS_NONE, &metadata, scratch);
+
+    if (FAILED(hr))
+    {
+        spdlog::error("loadDDSAtMaxSize: failed to load {} (0x{:08X})", path.string(), static_cast<unsigned>(hr));
+        return false;
     }
 
     const DXGI_FORMAT targetRGBAFormat = preferredRGBAFormat(metadata.format);

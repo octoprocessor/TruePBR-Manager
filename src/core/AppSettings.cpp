@@ -108,6 +108,18 @@ void AppSettings::setBaseTexturePath(const QString& path)
     m_settings.setValue("Paths/baseTexturePath", path);
 }
 
+int AppSettings::previewMaxSize() const
+{
+    // 2048 by default: an 8K source then costs ~16 MB as a preview instead of ~268 MB, and the
+    // difference is invisible at window resolution. 0 means "load full resolution".
+    return m_settings.value("Preview/maxSize", 2048).toInt();
+}
+
+void AppSettings::setPreviewMaxSize(int maxSize)
+{
+    m_settings.setValue("Preview/maxSize", maxSize);
+}
+
 QStringList AppSettings::recentProjects() const
 {
     return m_settings.value("RecentProjects/paths").toStringList();

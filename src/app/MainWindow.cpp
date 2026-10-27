@@ -70,8 +70,11 @@ static const char* channelDisplayName(ChannelMap channel)
 
 static QImage loadPreviewImage(const std::filesystem::path& path)
 {
-    // Use the shared texture cache — avoids redundant disk I/O and decompression.
-    const auto* cached = TextureCache::instance().get(path);
+    // Preview tier: decoded at no more than AppSettings::previewMaxSize() on the long edge, so an
+    // 8K source costs a fraction of the memory and time of a full decode. The returned buffer is a
+    // fresh copy because the QImage takes ownership of nothing.
+    const int maxSize = AppSettings::instance().previewMaxSize();
+    const auto cached = TextureCache::instance().getPreview(path, maxSize);
     if (cached && !cached->rgbaPixels.empty())
     {
         QImage image(cached->rgbaPixels.data(), cached->width, cached->height, cached->width * 4,
@@ -150,6 +153,10 @@ void MainWindow::setupMenuBar()
     m_projectNameAction = m_fileMenu->addAction(tr("Project &Name..."), this, &MainWindow::onRenameProject);
     m_fileMenu->addSeparator();
     m_batchImportAction = m_fileMenu->addAction(tr("&Batch Import Folder..."), this, &MainWindow::onBatchImport);
+    m_importFolderTreeAction =
+        m_fileMenu->addAction(tr("Import Folder &Tree (1 level)..."), this, &MainWindow::onImportFolderTree);
+    m_importFolderTreeAction->setToolTip(
+        tr("Each immediate subfolder becomes its own texture set, auto-detected from file suffixes"));
     m_importModAction = m_fileMenu->addAction(tr("&Import PBR Mod..."), this, &MainWindow::onImportMod);
     m_convertVanillaAction =
         m_fileMenu->addAction(tr("Convert &Vanilla Textures..."), this, &MainWindow::onConvertVanilla);
@@ -178,6 +185,40 @@ void MainWindow::setupMenuBar()
         m_fileMenu->addAction(tr("Register .tpbr File &Association"), this, &MainWindow::onRegisterFileAssociation);
     m_fileMenu->addSeparator();
     m_exitAction = m_fileMenu->addAction(tr("E&xit"), this, &QWidget::close, QKeySequence::Quit);
+
+    // View menu: preview decode resolution. Preview-only; export always uses full resolution.
+    m_viewMenu = menuBar()->addMenu(tr("&View"));
+    QMenu* previewResMenu = m_viewMenu->addMenu(tr("Preview &Resolution"));
+    m_previewResGroup = new QActionGroup(this);
+    m_previewResGroup->setExclusive(true);
+
+    const int currentCap = AppSettings::instance().previewMaxSize();
+    const struct
+    {
+        const char* label;
+        int size;
+    } resolutions[] = {
+        {"1024", 1024}, {"2048 (default)", 2048}, {"4096", 4096}, {"Full resolution (slow on 8K)", 0},
+    };
+
+    for (const auto& option : resolutions)
+    {
+        auto* action = previewResMenu->addAction(QString::fromLatin1(option.label));
+        action->setCheckable(true);
+        action->setChecked(currentCap == option.size);
+        m_previewResGroup->addAction(action);
+        const int size = option.size;
+        connect(action, &QAction::triggered, this, [this, size]() { onPreviewResolutionChanged(size); });
+    }
+
+    m_viewMenu->addSeparator();
+    m_viewMenu->addAction(tr("Clear Texture &Cache"), this,
+                          [this]()
+                          {
+                              TextureCache::instance().clear();
+                              refreshPreview();
+                              statusBar()->showMessage(tr("Texture cache cleared"));
+                          });
 
     setupLanguageMenu();
 }
@@ -1339,6 +1380,99 @@ void MainWindow::onImportChannel(ChannelMap channel)
                                  .arg(entry.height));
 }
 
+void MainWindow::onPreviewResolutionChanged(int maxSize)
+{
+    AppSettings::instance().setPreviewMaxSize(maxSize);
+    // Free the previous preview tier so the new cap takes effect immediately rather than competing
+    // with the old entries for the cache budget.
+    TextureCache::instance().clear();
+    refreshPreview();
+    if (m_preview3DMode)
+        refresh3DPreview();
+    statusBar()->showMessage(maxSize > 0 ? tr("Preview resolution: %1 px").arg(maxSize)
+                                         : tr("Preview resolution: full"));
+}
+
+void MainWindow::onImportFolderTree()
+{
+    const QString dir =
+        QFileDialog::getExistingDirectory(this, tr("Select Parent Folder (each subfolder becomes a set)"));
+    if (dir.isEmpty())
+        return;
+
+    const auto groups = TextureImporter::scanFolderTree(dir.toStdString());
+    if (groups.empty())
+    {
+        QMessageBox::information(this, tr("Import Folder Tree"),
+                                 tr("No texture files were found in that folder or its immediate subfolders."));
+        return;
+    }
+
+    // Ask before adding a batch, since it can be a lot of sets at once.
+    int withFiles = 0;
+    for (const auto& group : groups)
+    {
+        if (group.scan.hasAnyFiles())
+            ++withFiles;
+    }
+    if (withFiles == 0)
+    {
+        QMessageBox::information(this, tr("Import Folder Tree"),
+                                 tr("Subfolders were found but none contained recognizable PBR textures."));
+        return;
+    }
+
+    const auto answer = QMessageBox::question(
+        this, tr("Import Folder Tree"),
+        tr("Create %1 texture set(s) from this folder and its immediate subfolders?").arg(withFiles),
+        QMessageBox::Yes | QMessageBox::No);
+    if (answer != QMessageBox::Yes)
+        return;
+
+    int created = 0;
+    QStringList failures;
+    for (const auto& group : groups)
+    {
+        if (!group.scan.hasAnyFiles())
+            continue;
+
+        m_project.addTextureSet(group.name, group.matchTexture);
+        auto& ts = m_project.textureSets.back();
+
+        for (const auto& [slot, path] : group.scan.slotFiles)
+        {
+            ts.textures[slot] = TextureImporter::importTexture(path, slot);
+        }
+        for (const auto& [channel, path] : group.scan.channelFiles)
+        {
+            ts.channelMaps[channel] = TextureImporter::importChannelMap(path, channel);
+        }
+        if (!group.scan.channelFiles.empty() && group.scan.slotFiles.count(PBRTextureSlot::RMAOS) == 0)
+        {
+            ts.rmaosSourceMode = RMAOSSourceMode::SeparateChannels;
+        }
+
+        if (ts.textures.empty())
+        {
+            failures << QString::fromStdString(group.name);
+            m_project.textureSets.pop_back();
+            continue;
+        }
+        ++created;
+    }
+
+    // Select the last imported set, then let refreshUI() rebuild the list and editors.
+    m_currentSetIndex = m_project.textureSets.empty() ? -1 : static_cast<int>(m_project.textureSets.size()) - 1;
+    refreshUI();
+
+    QString message = tr("Imported %1 texture set(s)").arg(created);
+    if (!failures.isEmpty())
+    {
+        message += tr(", %1 skipped (no textures)").arg(failures.size());
+    }
+    statusBar()->showMessage(message);
+}
+
 void MainWindow::onBatchImport()
 {
     if (m_currentSetIndex < 0)
@@ -2256,15 +2390,17 @@ void MainWindow::refresh3DPreview()
     const auto& ts = m_project.textureSets[m_currentSetIndex];
 
     // Load RGBA pixel data for each PBR texture via the shared cache.
-    // Returns a pointer to cached data — no redundant disk I/O or decompression.
-    auto loadPixels = [](const PBRTextureSet& set, PBRTextureSlot slot, std::vector<uint8_t>& pixels, int& w,
-                         int& h) -> bool
+    // Uses the preview tier: the viewport samples these through mip-mapped GPU textures, so a
+    // 2048-or-smaller copy is indistinguishable and far cheaper than pushing 8K maps every refresh.
+    const int previewCap = AppSettings::instance().previewMaxSize();
+    auto loadPixels = [previewCap](const PBRTextureSet& set, PBRTextureSlot slot, std::vector<uint8_t>& pixels,
+                                   int& w, int& h) -> bool
     {
         auto it = set.textures.find(slot);
         if (it == set.textures.end() || it->second.sourcePath.empty())
             return false;
 
-        const auto* cached = TextureCache::instance().get(it->second.sourcePath);
+        const auto cached = TextureCache::instance().getPreview(it->second.sourcePath, previewCap);
         if (!cached || cached->rgbaPixels.empty())
             return false;
 
@@ -2299,7 +2435,7 @@ void MainWindow::refresh3DPreview()
             if (it == ts.channelMaps.end() || it->second.sourcePath.empty())
                 return false;
 
-            const auto* cached = TextureCache::instance().get(it->second.sourcePath);
+            const auto cached = TextureCache::instance().getPreview(it->second.sourcePath, previewCap);
             if (!cached || cached->rgbaPixels.empty())
                 return false;
 

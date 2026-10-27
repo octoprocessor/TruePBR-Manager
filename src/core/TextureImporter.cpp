@@ -349,6 +349,69 @@ TextureImporter::BatchScanResult TextureImporter::scanFolder(const std::filesyst
 
 // ─── Auto-Detect from Diffuse ──────────────────────────────
 
+std::vector<TextureImporter::FolderTreeGroup> TextureImporter::scanFolderTree(const std::filesystem::path& root)
+{
+    std::vector<FolderTreeGroup> groups;
+
+    std::error_code ec;
+    if (!std::filesystem::is_directory(root, ec))
+    {
+        spdlog::warn("scanFolderTree: not a directory: {}", root.string());
+        return groups;
+    }
+
+    auto makeGroup = [](const std::filesystem::path& folder) -> FolderTreeGroup
+    {
+        FolderTreeGroup group;
+        group.folder = folder;
+        group.name = folder.filename().string();
+        if (group.name.empty())
+        {
+            // A drive root has no filename; fall back to the full path string so the set is named.
+            group.name = folder.string();
+        }
+        group.matchTexture = group.name;
+        group.scan = scanFolder(folder);
+        return group;
+    };
+
+    // The root itself, when it holds images directly.
+    FolderTreeGroup rootGroup = makeGroup(root);
+    if (rootGroup.scan.hasAnyFiles())
+    {
+        groups.push_back(std::move(rootGroup));
+    }
+
+    // Exactly one level of subfolders.
+    std::vector<std::filesystem::path> subfolders;
+    for (const auto& entry : std::filesystem::directory_iterator(root, ec))
+    {
+        if (ec)
+            break;
+        if (entry.is_directory())
+        {
+            subfolders.push_back(entry.path());
+        }
+    }
+    std::sort(subfolders.begin(), subfolders.end());
+
+    for (const auto& sub : subfolders)
+    {
+        FolderTreeGroup group = makeGroup(sub);
+        if (group.scan.hasAnyFiles())
+        {
+            groups.push_back(std::move(group));
+        }
+        else
+        {
+            spdlog::debug("scanFolderTree: {} has no recognized textures, skipped", sub.string());
+        }
+    }
+
+    spdlog::info("scanFolderTree: {} texture set(s) found under {}", groups.size(), root.string());
+    return groups;
+}
+
 /// Known diffuse suffixes (used to strip from the filename to derive the base name)
 static const std::vector<std::string> kDiffuseSuffixes = {"_diffuse", "_albedo", "_basecolor", "_d"};
 

@@ -5,9 +5,12 @@
 #include "utils/DDSUtils.h"
 #include "utils/FileUtils.h"
 #include "utils/ImageUtils.h"
+#include "utils/TextureCache.h"
 
 #include <filesystem>
 #include <dxgiformat.h>
+#include <mutex>
+#include <unordered_map>
 #include "utils/Log.h"
 
 namespace tpbr
@@ -70,22 +73,17 @@ static DDSCompressionMode exportCompressionForSlot(const PBRTextureSet& textureS
 
 static bool loadTextureRGBA(const fs::path& sourcePath, int& width, int& height, std::vector<uint8_t>& rgbaPixels)
 {
-    const auto ext = FileUtils::getExtensionLower(sourcePath);
-    if (ext == ".dds")
+    // Go through the shared cache: an export that follows a preview (or a second export of the same
+    // set) then reuses the decoded pixels instead of decompressing an 8K map again.
+    const auto cached = TextureCache::instance().get(sourcePath);
+    if (cached && !cached->rgbaPixels.empty())
     {
-        return DDSUtils::loadDDS(sourcePath, width, height, rgbaPixels);
+        width = cached->width;
+        height = cached->height;
+        rgbaPixels = cached->rgbaPixels;
+        return true;
     }
-
-    auto imgData = ImageUtils::loadImage(sourcePath);
-    if (imgData.pixels.empty())
-    {
-        return false;
-    }
-
-    width = imgData.width;
-    height = imgData.height;
-    rgbaPixels = std::move(imgData.pixels);
-    return true;
+    return false;
 }
 
 static ExportAlphaMode analyzeAlphaMode(const std::vector<uint8_t>& rgbaPixels)
@@ -100,6 +98,51 @@ static ExportAlphaMode analyzeAlphaMode(const std::vector<uint8_t>& rgbaPixels)
 
     return ExportAlphaMode::Opaque;
 }
+
+// ─── Normal-map G flip bookkeeping ─────────────────────────
+//
+// A G-flipped normal map is a deterministic function of its source, so the ordinary mtime test is
+// valid once it has been written. But the test alone cannot tell whether the *current* output was
+// produced with the flip enabled, so a freshly enabled flip would be skipped and the unflipped file
+// left in place. Record what was actually written, per output path, for the lifetime of the process.
+
+namespace
+{
+
+struct FlipRecord
+{
+    long long sourceTicks = 0;
+    bool flipped = false;
+};
+
+std::mutex g_flipMutex;
+std::unordered_map<std::string, FlipRecord> g_flipRecords;
+
+long long fileTicks(const fs::path& path)
+{
+    std::error_code ec;
+    const auto t = fs::last_write_time(path, ec);
+    if (ec)
+        return 0;
+    return static_cast<long long>(t.time_since_epoch().count());
+}
+
+void recordFlip(const fs::path& outputPath, const fs::path& sourcePath, bool flipped)
+{
+    std::lock_guard<std::mutex> lock(g_flipMutex);
+    g_flipRecords[outputPath.string()] = FlipRecord{fileTicks(sourcePath), flipped};
+}
+
+bool flipMatches(const fs::path& outputPath, const fs::path& sourcePath, bool flipped)
+{
+    std::lock_guard<std::mutex> lock(g_flipMutex);
+    auto it = g_flipRecords.find(outputPath.string());
+    if (it == g_flipRecords.end())
+        return false;
+    return it->second.flipped == flipped && it->second.sourceTicks == fileTicks(sourcePath);
+}
+
+} // namespace
 
 static bool isBC1CompatibleSlot(PBRTextureSlot slot)
 {
@@ -382,10 +425,13 @@ bool ModExporter::exportTextures(const PBRTextureSet& textureSet, const fs::path
             targetH = sizeIt->second.second;
         }
 
-        // Skip export if output is already up-to-date
-        // (Skip this optimization for Normal with flipNormalG since the output differs from source)
-        if (!(slot == PBRTextureSlot::Normal && textureSet.flipNormalG) &&
-            isOutputUpToDate(entry.sourcePath, outPath, compressionMode, targetW, targetH))
+        // Skip export if output is already up-to-date.
+        // For a G-flipped normal map the deterministic result is not enough on its own: a flip that
+        // was just switched on would be skipped and leave the old, unflipped file behind, so require
+        // a record that this exact source was already written with the same flip state.
+        const bool isFlippedNormal = (slot == PBRTextureSlot::Normal && textureSet.flipNormalG);
+        const bool flipIsKnown = !isFlippedNormal || flipMatches(outPath, entry.sourcePath, true);
+        if (flipIsKnown && isOutputUpToDate(entry.sourcePath, outPath, compressionMode, targetW, targetH))
         {
             spdlog::info("ModExporter: skipping unchanged {}", outPath.filename().string());
             continue;
@@ -427,9 +473,16 @@ bool ModExporter::exportTextures(const PBRTextureSet& textureSet, const fs::path
             }
             else
             {
+                recordFlip(outPath, entry.sourcePath, true);
                 spdlog::info("ModExporter: exported {} (G flipped)", outPath.string());
             }
             continue;
+        }
+
+        // A non-flipped normal written by this build means a later flip must be honoured.
+        if (slot == PBRTextureSlot::Normal)
+        {
+            recordFlip(outPath, entry.sourcePath, false);
         }
 
         if (!exportSingleTexture(entry, outPath, compressionMode, targetW, targetH))

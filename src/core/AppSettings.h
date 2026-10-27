@@ -44,6 +44,11 @@ class AppSettings
     QString baseTexturePath() const;
     void setBaseTexturePath(const QString& path);
 
+    /// Largest edge, in pixels, used when decoding textures for the 2D preview and the 3D viewport.
+    /// 0 disables the cap (full resolution). Export always uses full resolution regardless.
+    int previewMaxSize() const;
+    void setPreviewMaxSize(int maxSize);
+
     /// Returns the recent projects list (most recent first, max 10).
     QStringList recentProjects() const;
 

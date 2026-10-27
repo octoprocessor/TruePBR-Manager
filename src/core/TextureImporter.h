@@ -33,7 +33,30 @@ class TextureImporter
         std::map<PBRTextureSlot, std::filesystem::path> slotFiles;
         std::map<ChannelMap, std::filesystem::path> channelFiles;
         std::vector<std::filesystem::path> unmatched; // Files that didn't match any known suffix
+
+        bool hasAnyFiles() const
+        {
+            return !slotFiles.empty() || !channelFiles.empty();
+        }
     };
+
+    /// One texture set discovered by scanFolderTree().
+    struct FolderTreeGroup
+    {
+        std::string name;         ///< Folder name, used as the texture set name
+        std::string matchTexture; ///< Same as `name` by default; the caller may want to edit it
+        std::filesystem::path folder;
+        BatchScanResult scan;
+    };
+
+    /// Scan a folder and its immediate subfolders, treating each folder as its own texture set.
+    ///
+    /// This matches the layout most authoring pipelines produce:
+    ///     output/<SetName>/<SetName>_Albedo.png, <SetName>_Normal.png, ...
+    /// The root folder itself is included as a group when it directly contains images, so a mixed
+    /// tree works too. `depth` is clamped to 1..1 by design — deeper nesting is not a texture set
+    /// boundary and would silently merge unrelated maps.
+    static std::vector<FolderTreeGroup> scanFolderTree(const std::filesystem::path& root);
 
     /// Scan a folder for image files and auto-detect PBR slots by suffix convention.
     /// Recognizes: _n, _g, _p, _rmaos, _cnr, _f, _sss, _roughness, _metallic, _ao, _specular, etc.

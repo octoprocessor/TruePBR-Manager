@@ -78,6 +78,8 @@ class MainWindow : public QMainWindow
     void onSlotPathOverrideChanged(PBRTextureSlot slot, const QString& path);
     void onFlipNormalG();
     void onAutoDetect();
+    void onPreviewResolutionChanged(int maxSize);
+    void onImportFolderTree();
 
   private:
     void setupMenuBar();
@@ -157,6 +159,9 @@ class MainWindow : public QMainWindow
     // Menu bar items (for retranslation)
     QMenu* m_fileMenu = nullptr;
     QMenu* m_recentMenu = nullptr;
+    QMenu* m_viewMenu = nullptr;
+    QActionGroup* m_previewResGroup = nullptr;
+    QAction* m_importFolderTreeAction = nullptr;
     QMenu* m_languageMenu = nullptr;
     QActionGroup* m_languageGroup = nullptr;
     QAction* m_newProjectAction = nullptr;
