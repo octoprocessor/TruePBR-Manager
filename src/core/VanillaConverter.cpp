@@ -161,7 +161,7 @@ VanillaConversionResult VanillaConverter::convert(const VanillaConversionInput& 
             result.success = false;
             ImportDiagnostic d;
             d.severity = ImportDiagnostic::Severity::Warning;
-            d.message = "Conversion cancelled by user";
+            d.message = "Conversion canceled by user";
             result.diagnostics.push_back(d);
             return false;
         }

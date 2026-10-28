@@ -14,7 +14,7 @@ cbuffer SceneCB : register(b0)
     row_major float4x4 g_WorldInvTranspose;
     float3 g_CameraPos;
     float _pad0;
-    float3 g_LightDir; // normalized, towards light
+    float3 g_LightDir; // normalized, toward light
     float _pad1;
     float3 g_LightColor;
     float g_LightIntensity;
@@ -88,11 +88,11 @@ SamplerState g_ClampSampler : register(s1);      // Linear clamp (for BRDF LUT)
 static const int POM_MAX_STEPS = 32;
 static const int POM_MIN_STEPS = 8;
 
-// Community Shaders normalises each sampled height before the march:
+// Community Shaders normalizes each sampled height before the march:
 //     (displacement - 0.5) * DisplacementScale + 0.5 + DisplacementOffset
 // Interlayer parallax passes (0.5, -0.25), everything else (1.0, 0.0) which returns the sample
 // unchanged. See ExtendedMaterials.hlsli AdjustDisplacementNormalized and Lighting.hlsl L1126-1128.
-float NormaliseDisplacement(float h, float scale, float offset)
+float NormalizeDisplacement(float h, float scale, float offset)
 {
     return (h - 0.5) * scale + 0.5 + offset;
 }
@@ -117,21 +117,21 @@ float2 ParallaxOcclusionMapping(float2 uv, float3 viewDirTS, float heightScale, 
     // Pre-offset by minHeight so height=0.5 stays in place
     float2 currentUV = uv + vd.xy * minHeight;
     // Convert height (1=high, 0=low) to depth (0=surface, 1=deep)
-    float currentDepth = 1.0 - NormaliseDisplacement(g_Displacement.SampleLevel(g_Sampler, currentUV, 0).r, dispScale, dispOffset);
+    float currentDepth = 1.0 - NormalizeDisplacement(g_Displacement.SampleLevel(g_Sampler, currentUV, 0).r, dispScale, dispOffset);
 
     [loop] for (int i = 0; i < POM_MAX_STEPS; ++i)
     {
         if (currentLayerDepth >= currentDepth || i >= numSteps)
             break;
         currentUV -= deltaUV;
-        currentDepth = 1.0 - NormaliseDisplacement(g_Displacement.SampleLevel(g_Sampler, currentUV, 0).r, dispScale, dispOffset);
+        currentDepth = 1.0 - NormalizeDisplacement(g_Displacement.SampleLevel(g_Sampler, currentUV, 0).r, dispScale, dispOffset);
         currentLayerDepth += layerDepth;
     }
 
     // Linear interpolation between last two steps for sub-step precision
     float2 prevUV = currentUV + deltaUV;
     float afterDepth = currentDepth - currentLayerDepth;
-    float beforeDepth = (1.0 - NormaliseDisplacement(g_Displacement.SampleLevel(g_Sampler, prevUV, 0).r, dispScale, dispOffset)) - currentLayerDepth + layerDepth;
+    float beforeDepth = (1.0 - NormalizeDisplacement(g_Displacement.SampleLevel(g_Sampler, prevUV, 0).r, dispScale, dispOffset)) - currentLayerDepth + layerDepth;
     float weight = afterDepth / (afterDepth - beforeDepth);
     return lerp(currentUV, prevUV, weight);
 }
@@ -249,7 +249,7 @@ PSOutput PSMain(PSInput input)
             viewDirTS.y = dot(refractedViewDir, B);
             viewDirTS.z = dot(refractedViewDir, N_geo);
 
-            // Interlayer parallax remaps the sampled height (see NormaliseDisplacement) rather than
+            // Interlayer parallax remaps the sampled height (see NormalizeDisplacement) rather than
             // shortening the march.
             dispScale = 0.5;
             dispOffset = -0.25;
