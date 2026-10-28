@@ -88,7 +88,16 @@ SamplerState g_ClampSampler : register(s1);      // Linear clamp (for BRDF LUT)
 static const int POM_MAX_STEPS = 32;
 static const int POM_MIN_STEPS = 8;
 
-float2 ParallaxOcclusionMapping(float2 uv, float3 viewDirTS, float heightScale)
+// Community Shaders normalises each sampled height before the march:
+//     (displacement - 0.5) * DisplacementScale + 0.5 + DisplacementOffset
+// Interlayer parallax passes (0.5, -0.25), everything else (1.0, 0.0) which returns the sample
+// unchanged. See ExtendedMaterials.hlsli AdjustDisplacementNormalized and Lighting.hlsl L1126-1128.
+float NormaliseDisplacement(float h, float scale, float offset)
+{
+    return (h - 0.5) * scale + 0.5 + offset;
+}
+
+float2 ParallaxOcclusionMapping(float2 uv, float3 viewDirTS, float heightScale, float dispScale, float dispOffset)
 {
     // Match Community Shaders scale: maxHeight = 0.1 * HeightScale
     float maxHeight = 0.1 * heightScale;
@@ -108,21 +117,21 @@ float2 ParallaxOcclusionMapping(float2 uv, float3 viewDirTS, float heightScale)
     // Pre-offset by minHeight so height=0.5 stays in place
     float2 currentUV = uv + vd.xy * minHeight;
     // Convert height (1=high, 0=low) to depth (0=surface, 1=deep)
-    float currentDepth = 1.0 - g_Displacement.SampleLevel(g_Sampler, currentUV, 0).r;
+    float currentDepth = 1.0 - NormaliseDisplacement(g_Displacement.SampleLevel(g_Sampler, currentUV, 0).r, dispScale, dispOffset);
 
     [loop] for (int i = 0; i < POM_MAX_STEPS; ++i)
     {
         if (currentLayerDepth >= currentDepth || i >= numSteps)
             break;
         currentUV -= deltaUV;
-        currentDepth = 1.0 - g_Displacement.SampleLevel(g_Sampler, currentUV, 0).r;
+        currentDepth = 1.0 - NormaliseDisplacement(g_Displacement.SampleLevel(g_Sampler, currentUV, 0).r, dispScale, dispOffset);
         currentLayerDepth += layerDepth;
     }
 
     // Linear interpolation between last two steps for sub-step precision
     float2 prevUV = currentUV + deltaUV;
     float afterDepth = currentDepth - currentLayerDepth;
-    float beforeDepth = (1.0 - g_Displacement.SampleLevel(g_Sampler, prevUV, 0).r) - currentLayerDepth + layerDepth;
+    float beforeDepth = (1.0 - NormaliseDisplacement(g_Displacement.SampleLevel(g_Sampler, prevUV, 0).r, dispScale, dispOffset)) - currentLayerDepth + layerDepth;
     float weight = afterDepth / (afterDepth - beforeDepth);
     return lerp(currentUV, prevUV, weight);
 }
@@ -206,6 +215,11 @@ PSOutput PSMain(PSInput input)
         viewDirTS.z = dot(V, N_geo);
 
         float heightScale = g_DisplacementScale;
+        // CS leaves the march distance alone in both branches (HeightScale *= displacementScale
+        // happens either way) and remaps the sampled height instead. The old `heightScale *= 0.5`
+        // here was double-counting the interlayer DisplacementScale.
+        float dispScale = 1.0;
+        float dispOffset = 0.0;
 
         [branch] if (g_FeatureFlags & PBR::Flags::InterlayerParallax)
         {
@@ -235,8 +249,10 @@ PSOutput PSMain(PSInput input)
             viewDirTS.y = dot(refractedViewDir, B);
             viewDirTS.z = dot(refractedViewDir, N_geo);
 
-            // Interlayer parallax uses reduced displacement
-            heightScale *= 0.5;
+            // Interlayer parallax remaps the sampled height (see NormaliseDisplacement) rather than
+            // shortening the march.
+            dispScale = 0.5;
+            dispOffset = -0.25;
         }
 
         // Correct for tangent/bitangent vs UV gradient misalignment.
@@ -253,7 +269,7 @@ PSOutput PSMain(PSInput input)
 
         viewDirTS = normalize(viewDirTS);
 
-        uv = ParallaxOcclusionMapping(uv, viewDirTS, heightScale);
+        uv = ParallaxOcclusionMapping(uv, viewDirTS, heightScale, dispScale, dispOffset);
     }
 
     // ── Sample textures (biased mip selection) ───────────────

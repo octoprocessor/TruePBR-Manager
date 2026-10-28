@@ -1561,7 +1561,14 @@ void D3D12Renderer::setFeatureParams(const PBRFeatureFlags& features, const PBRP
     if (features.coatNormal)
         flags |= (1 << 8); // CoatNormal
     if (features.coatParallax)
+    {
+        // CS derives InterlayerParallax from the NIF's kMultiLayerParallax + kSoftLighting, which
+        // always also sets TwoLayer, and the branch only runs inside HasDisplacement. Setting bit 7
+        // alone would preview a state the game cannot reach.
         flags |= (1 << 7); // InterlayerParallax
+        flags |= (1 << 5); // TwoLayer
+        flags |= (1 << 1); // HasDisplacement
+    }
     if (features.fuzz)
         flags |= (1 << 9); // Fuzz
     if (features.hair)
