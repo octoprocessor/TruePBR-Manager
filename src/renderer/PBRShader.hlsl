@@ -14,7 +14,7 @@ cbuffer SceneCB : register(b0)
     row_major float4x4 g_WorldInvTranspose;
     float3 g_CameraPos;
     float _pad0;
-    float3 g_LightDir; // normalized, toward light
+    float3 g_LightDir; // normalized, towards light
     float _pad1;
     float3 g_LightColor;
     float g_LightIntensity;

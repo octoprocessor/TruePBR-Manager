@@ -602,14 +602,14 @@ bool ModExporter::exportMod(const Project& project, ExportProgressCallback progr
 
     if (cancelled)
     {
-        spdlog::warn("ModExporter: export canceled by user");
+        spdlog::warn("ModExporter: export cancelled by user");
         return false;
     }
 
     // Export PGPatcher JSON
     if (progress && !progress(currentStep, totalSteps, "PGPatcher JSON"))
     {
-        spdlog::warn("ModExporter: export canceled by user");
+        spdlog::warn("ModExporter: export cancelled by user");
         return false;
     }
     if (!JsonExporter::exportPGPatcherJson(project, project.outputModFolder))
@@ -621,7 +621,7 @@ bool ModExporter::exportMod(const Project& project, ExportProgressCallback progr
     // Export Landscape PBRTextureSets JSONs (for sets that have landscapeEdids)
     if (progress && !progress(currentStep, totalSteps, "Landscape JSON"))
     {
-        spdlog::warn("ModExporter: export canceled by user");
+        spdlog::warn("ModExporter: export cancelled by user");
         return false;
     }
     if (!LandscapeExporter::exportLandscapeJsons(project))

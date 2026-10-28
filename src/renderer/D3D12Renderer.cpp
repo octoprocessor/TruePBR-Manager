@@ -1068,14 +1068,14 @@ void D3D12Renderer::createDefaultIBL()
     std::memset(m_zh3Data, 0, sizeof(m_zh3Data));
     m_zh3Data[0][0] = m_zh3Data[0][1] = m_zh3Data[0][2] = 0.02f;
 
-    // Prefiltered: 1x1 dark gray dummy cubemap
+    // Prefiltered: 1x1 dark grey dummy cubemap
     {
         float pref[] = {0.02f, 0.02f, 0.02f, 1.0f};
         std::vector<float> face(pref, pref + 4);
         std::vector<float> faces[6] = {face, face, face, face, face, face};
         uploadCubemap(3, m_prefilteredCubemap, faces, 1, 1);
     }
-    // Skybox: 1x1 dark gray dummy cubemap (slot 10)
+    // Skybox: 1x1 dark grey dummy cubemap (slot 10)
     {
         float pref[] = {0.02f, 0.02f, 0.02f, 1.0f};
         std::vector<float> face(pref, pref + 4);

@@ -14,7 +14,7 @@ namespace tpbr
 /// conversion pipeline as a three-column flow diagram.
 ///
 /// Left column  — vanilla input nodes (8 types)
-/// Center column — processing / transformation nodes
+/// Centre column — processing / transformation nodes
 /// Right column  — PBR output nodes
 ///
 /// Nodes have three visual states; arrows between them activate
@@ -27,7 +27,7 @@ class ConversionFlowWidget : public QWidget
     /// Visual state for each node in the diagram.
     enum class NodeState
     {
-        Inactive, ///< Gray — not involved in current conversion
+        Inactive, ///< Grey — not involved in current conversion
         Active,   ///< Highlighted — texture provided / output generated
         Error,    ///< Red — conversion error for this slot
     };
@@ -126,7 +126,7 @@ class ConversionFlowWidget : public QWidget
     /// Compute the bounding rect of a node given its column and row.
     static QRectF nodeRect(int column, int row);
 
-    /// Determine arrow color/state from source + target.
+    /// Determine arrow colour/state from source + target.
     static bool isArrowActive(NodeState source, NodeState target);
 };
 

@@ -1199,7 +1199,7 @@ void MainWindow::onExportMod()
 
                 if (cancelled->load())
                 {
-                    statusBar()->showMessage(tr("Export canceled"));
+                    statusBar()->showMessage(tr("Export cancelled"));
                 }
                 else if (result->load())
                 {
@@ -1727,7 +1727,7 @@ void MainWindow::onConvertVanilla()
 
                 if (cancelled->load())
                 {
-                    statusBar()->showMessage(tr("Conversion canceled"));
+                    statusBar()->showMessage(tr("Conversion cancelled"));
                     return;
                 }
 

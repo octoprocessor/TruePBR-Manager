@@ -29,7 +29,7 @@ PreviewMesh MeshGenerator::generatePlane()
 {
     PreviewMesh mesh;
 
-    // 2x2 quad centered at origin, facing +Z (toward camera in default view)
+    // 2x2 quad centered at origin, facing +Z (towards camera in default view)
     // Double-sided: front face (+Z normal) and back face (-Z normal)
 
     auto addFace = [&](float nz)

@@ -16,7 +16,7 @@ namespace tpbr
 
 // ─── Layout helpers ────────────────────────────────────────
 
-/// Column X-centers expressed as fractions of kDesignWidth.
+/// Column X-centres expressed as fractions of kDesignWidth.
 static constexpr double kColInputX = 0.12;
 static constexpr double kColProcessX = 0.50;
 static constexpr double kColOutputX = 0.88;
@@ -65,7 +65,7 @@ void ConversionFlowWidget::buildTopology()
         {QStringLiteral("in_cubemap"), tr("Cubemap"), NodeState::Inactive},
     };
 
-    // ── Processing nodes (center column) ───────────────────
+    // ── Processing nodes (centre column) ───────────────────
 
     processingNodes_ = {
         {QStringLiteral("proc_shininess"), tr("Shininess \xe2\x86\x92 Roughness"), NodeState::Inactive},
@@ -298,7 +298,7 @@ bool ConversionFlowWidget::isArrowActive(NodeState source, NodeState target)
 
 void ConversionFlowWidget::drawNode(QPainter& painter, const QRectF& rect, const QString& label, NodeState state) const
 {
-    // Colors
+    // Colours
     QColor fillColor;
     QColor borderColor;
     QColor textColor;
