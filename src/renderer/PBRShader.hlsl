@@ -64,7 +64,7 @@ cbuffer MaterialCB : register(b1)
     uint  g_DebugMode; // 0=off, 1=Normal, 2=Roughness, 3=Metallic, 4=AO, 5=Specular
     float g_MipBias;   // Mip LOD bias for material texture sampling (e.g. -1.0)
     float g_DisplacementScale;
-    uint  _padDebug;
+    float g_AlphaFade; // preview-only opacity multiplier; 1.0 = opaque
 };
 
 // ─── Textures & Samplers ───────────────────────────────────
@@ -545,7 +545,7 @@ PSOutput PSMain(PSInput input)
     float2 velocity = (currNDC - prevNDC) * float2(0.5, -0.5);
 
     PSOutput output;
-    output.color = float4(color, alpha);
+    output.color = float4(color, alpha * g_AlphaFade);
     output.velocity = velocity;
     return output;
 }

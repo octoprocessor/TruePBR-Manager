@@ -64,6 +64,9 @@ class MaterialPreviewWidget : public QWidget
     /// Set mip LOD bias for material texture sampling.
     void setMipBias(float bias);
 
+    /// Preview-only alpha fade (1.0 = opaque, 0 = invisible).
+    void setAlphaFade(float fade);
+
     QComboBox* shapeCombo() const
     {
         return m_shapeCombo;

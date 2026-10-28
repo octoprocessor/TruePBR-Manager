@@ -93,7 +93,7 @@ struct MaterialCBData
     uint32_t debugMode; // 0=off, 1=Normal, 2=Roughness, 3=Metallic, 4=AO, 5=Specular
     float mipBias;      // Mip LOD bias for material texture sampling
     float displacementScale;
-    uint32_t _padDebug;
+    float alphaFade; // preview-only opacity multiplier, 1.0 = opaque (CS has no material alpha)
 };
 
 /// Per-frame resources for double-buffered rendering.
@@ -239,6 +239,15 @@ class D3D12Renderer
         return m_mipBias;
     }
 
+    /// Set the preview alpha fade. Preview-only: 1.0 = opaque, 0 = invisible. Community Shaders'
+    /// PBR material has no alpha term (Lighting.hlsl uses the albedo alpha for nothing), so this is
+    /// a viewing aid and is never written to a project or a NIF.
+    void setAlphaFade(float fade);
+    float alphaFade() const
+    {
+        return m_alphaFade;
+    }
+
     /// Render one frame.
     void render();
 
@@ -351,6 +360,9 @@ class D3D12Renderer
     // Mip LOD bias for material textures
     float m_mipBias = -1.0f;
 
+    // Preview alpha fade (1.0 = opaque)
+    float m_alphaFade = 1.0f;
+
     // HDR state
     bool m_hdrEnabled = false;
     float m_paperWhiteNits = 200.0f;
@@ -398,6 +410,7 @@ class D3D12Renderer
     // Pipeline state (scene pass)
     ComPtr<ID3D12RootSignature> m_rootSignature;
     ComPtr<ID3D12PipelineState> m_pipelineState;
+    ComPtr<ID3D12PipelineState> m_pipelineStateBlend; // same as above but straight-alpha blended
     ComPtr<ID3D12PipelineState> m_skyboxPSO;
 
     // Post-process pipelines (TAA + tone mapping)

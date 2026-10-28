@@ -428,6 +428,25 @@ void MainWindow::setupCentralWidget()
     m_exposureLabel->setFixedWidth(32);
     controlLayout->addWidget(m_exposureLabel);
 
+    // Alpha fade — a viewing aid, not a material property. Community Shaders' PBR shader has no
+    // alpha term (its `alpha` is the microfacet roughness squared), so nothing about this value is
+    // exported; it only lets the preview be seen through.
+    m_alphaFadeCB = new QCheckBox(tr("Fade"), m_3dControlBar);
+    m_alphaFadeCB->setToolTip(tr("Preview-only alpha fade. Exported materials are unaffected: "
+                                 "Community Shaders' PBR shader has no material opacity."));
+    controlLayout->addWidget(m_alphaFadeCB);
+
+    m_alphaFadeSlider = new QSlider(Qt::Horizontal, m_3dControlBar);
+    m_alphaFadeSlider->setRange(0, 100);
+    m_alphaFadeSlider->setValue(50); // 0.50 when enabled
+    m_alphaFadeSlider->setToolTip(tr("Alpha fade amount (0 = invisible, 100 = opaque)"));
+    m_alphaFadeSlider->setEnabled(false);
+    controlLayout->addWidget(m_alphaFadeSlider, 1);
+
+    m_alphaFadeLabel = new QLabel("1.00", m_3dControlBar);
+    m_alphaFadeLabel->setFixedWidth(32);
+    controlLayout->addWidget(m_alphaFadeLabel);
+
     m_3dControlBar->setVisible(false);
     previewLayout->addWidget(m_3dControlBar);
 
@@ -595,6 +614,25 @@ void MainWindow::setupCentralWidget()
                 float ev = static_cast<float>(value) / 10.0f;
                 m_exposureLabel->setText(QString::number(ev, 'f', 1));
                 m_materialPreview->setExposure(ev);
+            });
+
+    connect(m_alphaFadeCB, &QCheckBox::toggled, this,
+            [this](bool on)
+            {
+                m_alphaFadeSlider->setEnabled(on);
+                float fade = on ? static_cast<float>(m_alphaFadeSlider->value()) / 100.0f : 1.0f;
+                m_alphaFadeLabel->setText(QString::number(fade, 'f', 2));
+                m_materialPreview->setAlphaFade(fade);
+            });
+
+    connect(m_alphaFadeSlider, &QSlider::valueChanged, this,
+            [this](int value)
+            {
+                if (!m_alphaFadeCB->isChecked())
+                    return;
+                float fade = static_cast<float>(value) / 100.0f;
+                m_alphaFadeLabel->setText(QString::number(fade, 'f', 2));
+                m_materialPreview->setAlphaFade(fade);
             });
 
     connect(m_lightColorBtn, &QPushButton::clicked, this,
@@ -866,6 +904,8 @@ void MainWindow::save3DPreviewSettings()
     s.setValue("Preview3D/peakBrightness", m_peakBrightnessSlider->value());
     s.setValue("Preview3D/shapeIndex", m_shapeCombo->currentIndex());
     s.setValue("Preview3D/mipBias", m_mipBiasSlider->value());
+    s.setValue("Preview3D/alphaFadeEnabled", m_alphaFadeCB->isChecked());
+    s.setValue("Preview3D/alphaFade", m_alphaFadeSlider->value());
 }
 
 void MainWindow::restore3DPreviewSettings()
@@ -878,6 +918,8 @@ void MainWindow::restore3DPreviewSettings()
 
     m_lightIntensitySlider->setValue(s.value("Preview3D/lightIntensity", 30).toInt());
     m_exposureSlider->setValue(s.value("Preview3D/exposure", 0).toInt());
+    m_alphaFadeSlider->setValue(s.value("Preview3D/alphaFade", 50).toInt());
+    m_alphaFadeCB->setChecked(s.value("Preview3D/alphaFadeEnabled", false).toBool());
 
     float r = s.value("Preview3D/lightColorR", 1.0).toFloat();
     float g = s.value("Preview3D/lightColorG", 1.0).toFloat();
@@ -2334,6 +2376,11 @@ void MainWindow::pushAllPreviewSettings()
     float ev = static_cast<float>(m_exposureSlider->value()) / 10.0f;
     m_materialPreview->setExposure(ev);
 
+    float alphaFade = m_alphaFadeCB->isChecked() ? static_cast<float>(m_alphaFadeSlider->value()) / 100.0f
+                                                 : 1.0f;
+    m_materialPreview->setAlphaFade(alphaFade);
+    m_alphaFadeLabel->setText(QString::number(alphaFade, 'f', 2));
+
     uint32_t flags = 0;
     if (m_horizonOcclusionCB->isChecked())
         flags |= 1u;
@@ -2654,6 +2701,10 @@ void MainWindow::retranslateUi()
     m_lightColorBtn->setToolTip(tr("Light Color"));
     m_evLabel->setText(tr("EV:"));
     m_exposureSlider->setToolTip(tr("Exposure Compensation (EV)"));
+    m_alphaFadeCB->setText(tr("Fade"));
+    m_alphaFadeCB->setToolTip(tr("Preview-only alpha fade. Exported materials are unaffected: "
+                                 "Community Shaders' PBR shader has no material opacity."));
+    m_alphaFadeSlider->setToolTip(tr("Alpha fade amount (0 = invisible, 100 = opaque)"));
 
     // Render options
     m_horizonOcclusionCB->setText(tr("Horizon Occlusion"));

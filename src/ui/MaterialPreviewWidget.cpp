@@ -272,6 +272,12 @@ void MaterialPreviewWidget::setMipBias(float bias)
         m_renderer->setMipBias(bias);
 }
 
+void MaterialPreviewWidget::setAlphaFade(float fade)
+{
+    if (m_renderer)
+        m_renderer->setAlphaFade(fade);
+}
+
 void MaterialPreviewWidget::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);

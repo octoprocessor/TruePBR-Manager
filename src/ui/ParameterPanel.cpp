@@ -160,7 +160,10 @@ void ParameterPanel::setupUI()
     // ── Base Parameters (always visible) ───────────────────
     m_baseGroup = new QGroupBox(tr("Base"), this);
     auto* baseLayout = new QFormLayout(m_baseGroup);
-    makeSpin(m_specularLevel, 0.0, 1.0, 0.01, 0.04);
+    // Specular Level goes to 3, not 1: Community Shaders' own in-game editor exposes it as
+    // SliderFloat(..., 0.f, 3.f) (TruePBR.cpp), and nothing in Lighting.hlsl clamps it, so values
+    // above 1 simply drive F0 past white. Same reasoning as Roughness/Displacement Scale.
+    makeSpin(m_specularLevel, 0.0, 3.0, 0.01, 0.04);
     makeSpin(m_roughnessScale, 0.0, 5.0, 0.1, 1.0);
     baseLayout->addRow(tr("Specular Level"), m_specularLevel);
     baseLayout->addRow(tr("Roughness Scale"), m_roughnessScale);
@@ -214,16 +217,29 @@ void ParameterPanel::setupUI()
     mainLayout->addWidget(m_fuzzSection);
 
     // ── Glint Section ──────────────────────────────────────
+    // Ranges mirror the clamps Community Shaders applies in Lighting.hlsl (~L2255). A value outside
+    // them cannot change the result, so offering it only invites the "I typed it and nothing
+    // happened" report: screen-space scale is max(1, x), roughness is clamped to 0.005-0.3, and
+    // density randomization to 0-5. Log microfacet density is inverted (40 - x) into 1-40.
     m_glintSection = new QGroupBox(tr("Glint"), this);
     auto* glintLayout = new QFormLayout(m_glintSection);
-    makeSpin(m_glintScreenSpaceScale, 0.0, 100.0, 0.5, 1.5, 2);
+    makeSpin(m_glintScreenSpaceScale, 1.0, 3.0, 0.5, 1.5, 2);
     makeSpin(m_glintLogMicrofacetDensity, 0.0, 40.0, 1.0, 40.0, 1);
-    makeSpin(m_glintMicrofacetRoughness, 0.0, 1.0, 0.05, 0.015, 3);
-    makeSpin(m_glintDensityRandomization, 0.0, 1000.0, 10.0, 2.0, 1);
+    makeSpin(m_glintMicrofacetRoughness, 0.005, 0.3, 0.05, 0.015, 3);
+    makeSpin(m_glintDensityRandomization, 0.0, 5.0, 0.5, 2.0, 1);
     glintLayout->addRow(tr("Screen Space Scale"), m_glintScreenSpaceScale);
     glintLayout->addRow(tr("Log Microfacet Density"), m_glintLogMicrofacetDensity);
     glintLayout->addRow(tr("Microfacet Roughness"), m_glintMicrofacetRoughness);
     glintLayout->addRow(tr("Density Randomization"), m_glintDensityRandomization);
+
+    m_glintScreenSpaceScale->setToolTip(
+        tr("Community Shaders applies max(1, value), so 1.0 is the floor and below it has no effect."));
+    m_glintLogMicrofacetDensity->setToolTip(
+        tr("Inverted and clamped to 1-40 by Community Shaders; 40 is the sparsest density."));
+    m_glintMicrofacetRoughness->setToolTip(
+        tr("Community Shaders clamps this to 0.005-0.3."));
+    m_glintDensityRandomization->setToolTip(
+        tr("Community Shaders clamps this to 0-5."));
     m_glintSection->setVisible(false);
     mainLayout->addWidget(m_glintSection);
 

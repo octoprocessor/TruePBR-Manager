@@ -15,6 +15,29 @@ namespace tpbr
 
 using namespace DirectX;
 
+namespace
+{
+/// Turn an opaque PBR pipeline description into its straight-alpha blended twin.
+///
+/// One preview mesh per frame, so there is no transparency sort to do; turning off depth writes is
+/// what makes the far side of the mesh show through instead of being z-buffered away. RT1 carries
+/// velocity for TAA and must stay opaque, or the reprojection reads a faded velocity buffer.
+void makeBlendedPsoDesc(D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc)
+{
+    auto& rt0 = desc.BlendState.RenderTarget[0];
+    rt0.BlendEnable = TRUE;
+    rt0.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+    rt0.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+    rt0.BlendOp = D3D12_BLEND_OP_ADD;
+    rt0.SrcBlendAlpha = D3D12_BLEND_ONE;
+    rt0.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+    rt0.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+
+    desc.BlendState.RenderTarget[1].BlendEnable = FALSE;
+    desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+}
+} // namespace
+
 D3D12Renderer::D3D12Renderer() = default;
 
 D3D12Renderer::~D3D12Renderer()
@@ -532,6 +555,17 @@ bool D3D12Renderer::createRootSignatureAndPSO()
         return false;
     }
 
+    // Blended twin, used when the preview alpha fade is below 1.0
+    {
+        auto blendDesc = psoDesc;
+        makeBlendedPsoDesc(blendDesc);
+        if (FAILED(m_device->CreateGraphicsPipelineState(&blendDesc, IID_PPV_ARGS(&m_pipelineStateBlend))))
+        {
+            spdlog::error("Failed to create blended PSO");
+            return false;
+        }
+    }
+
     // ── Skybox PSO (full-screen triangle, no depth write, no input layout) ──
     {
         std::vector<uint8_t> skyVSData, skyPSData;
@@ -641,6 +675,14 @@ bool D3D12Renderer::recreatePSOs()
         if (FAILED(m_device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&m_pipelineState))))
         {
             spdlog::error("Failed to recreate PBR PSO");
+            return false;
+        }
+
+        auto blendDesc = psoDesc;
+        makeBlendedPsoDesc(blendDesc);
+        if (FAILED(m_device->CreateGraphicsPipelineState(&blendDesc, IID_PPV_ARGS(&m_pipelineStateBlend))))
+        {
+            spdlog::error("Failed to recreate blended PBR PSO");
             return false;
         }
     }
@@ -2111,6 +2153,7 @@ void D3D12Renderer::render()
     frame.materialCBMapped->debugMode = m_debugMode;
     frame.materialCBMapped->mipBias = m_mipBias;
     frame.materialCBMapped->displacementScale = m_displacementScale;
+    frame.materialCBMapped->alphaFade = m_alphaFade;
 
     // 5. Record commands — Scene pass (HDR color + velocity MRT)
     auto hdrRtv = m_rtvHeap.cpuHandle(m_hdrColorRtvIndex);
@@ -2151,8 +2194,9 @@ void D3D12Renderer::render()
         m_commandList->DrawInstanced(3, 1, 0, 0);
     }
 
-    // Draw PBR mesh
-    m_commandList->SetPipelineState(m_pipelineState.Get());
+    // Draw PBR mesh — blended pipeline only when the fade actually hides something
+    const bool faded = (m_alphaFade < 0.999f) && m_pipelineStateBlend;
+    m_commandList->SetPipelineState(faded ? m_pipelineStateBlend.Get() : m_pipelineState.Get());
     m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     m_commandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
     m_commandList->IASetIndexBuffer(&m_indexBufferView);
@@ -2686,6 +2730,15 @@ void D3D12Renderer::setMipBias(float bias)
     m_mipBias = bias;
 }
 
+void D3D12Renderer::setAlphaFade(float fade)
+{
+    if (fade < 0.0f)
+        fade = 0.0f;
+    if (fade > 1.0f)
+        fade = 1.0f;
+    m_alphaFade = fade;
+}
+
 void D3D12Renderer::setHDREnabled(bool enabled)
 {
     if (!m_initialized || !m_hwnd)
@@ -2734,6 +2787,7 @@ void D3D12Renderer::rebuildSwapChainAndPSO()
         rt.Reset();
     m_depthStencilBuffer.Reset();
     m_pipelineState.Reset();
+    m_pipelineStateBlend.Reset();
     m_skyboxPSO.Reset();
     m_toneMapPSO.Reset();
     m_swapChain.Reset();

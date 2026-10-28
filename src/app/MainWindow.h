@@ -130,6 +130,9 @@ class MainWindow : public QMainWindow
     QLabel* m_lightIntensityLabel = nullptr;
     QSlider* m_exposureSlider = nullptr;
     QLabel* m_exposureLabel = nullptr;
+    QCheckBox* m_alphaFadeCB = nullptr;
+    QSlider* m_alphaFadeSlider = nullptr;
+    QLabel* m_alphaFadeLabel = nullptr;
     QComboBox* m_hdriCombo = nullptr;
     QSlider* m_iblIntensitySlider = nullptr;
     QLabel* m_iblIntensityLabel = nullptr;
