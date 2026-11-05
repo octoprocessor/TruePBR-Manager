@@ -2201,7 +2201,8 @@ void D3D12Renderer::render()
         m_commandList->DrawInstanced(3, 1, 0, 0);
     }
 
-    // Draw PBR mesh — blended pipeline only when the fade actually hides something
+    // Draw PBR mesh — blended pipeline only when the fade actually hides something. The fade
+    // control stops at 0.99, so 1.0 here means "Fade off", not "slider at maximum".
     const bool faded = (m_alphaFade < 0.999f) && m_pipelineStateBlend;
     m_commandList->SetPipelineState(faded ? m_pipelineStateBlend.Get() : m_pipelineState.Get());
     m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);

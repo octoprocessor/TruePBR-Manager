@@ -437,9 +437,12 @@ void MainWindow::setupCentralWidget()
     controlLayout->addWidget(m_alphaFadeCB);
 
     m_alphaFadeSlider = new QSlider(Qt::Horizontal, m_3dControlBar);
-    m_alphaFadeSlider->setRange(0, 100);
+    // 0-99, never 100: the Fade toggle is the on/off switch and D3D12Renderer draws the opaque
+    // pipeline at 1.0, so a reachable 1.00 would only duplicate "Fade off".
+    m_alphaFadeSlider->setRange(0, 99);
     m_alphaFadeSlider->setValue(50); // 0.50 when enabled
-    m_alphaFadeSlider->setToolTip(tr("Alpha fade amount (0 = invisible, 100 = opaque)"));
+    m_alphaFadeSlider->setToolTip(tr("Alpha fade amount (0 = invisible, 99 = barely faded; "
+                                     "clear Fade for fully opaque)"));
     m_alphaFadeSlider->setEnabled(false);
     controlLayout->addWidget(m_alphaFadeSlider, 1);
 
@@ -918,6 +921,7 @@ void MainWindow::restore3DPreviewSettings()
 
     m_lightIntensitySlider->setValue(s.value("Preview3D/lightIntensity", 30).toInt());
     m_exposureSlider->setValue(s.value("Preview3D/exposure", 0).toInt());
+    // QSlider clamps, so a 100 saved by an earlier build restores as 99 rather than going opaque.
     m_alphaFadeSlider->setValue(s.value("Preview3D/alphaFade", 50).toInt());
     m_alphaFadeCB->setChecked(s.value("Preview3D/alphaFadeEnabled", false).toBool());
 
@@ -2704,7 +2708,8 @@ void MainWindow::retranslateUi()
     m_alphaFadeCB->setText(tr("Fade"));
     m_alphaFadeCB->setToolTip(tr("Preview-only alpha fade. Exported materials are unaffected: "
                                  "Community Shaders' PBR shader has no material opacity."));
-    m_alphaFadeSlider->setToolTip(tr("Alpha fade amount (0 = invisible, 100 = opaque)"));
+    m_alphaFadeSlider->setToolTip(tr("Alpha fade amount (0 = invisible, 99 = barely faded; "
+                                     "clear Fade for fully opaque)"));
 
     // Render options
     m_horizonOcclusionCB->setText(tr("Horizon Occlusion"));
