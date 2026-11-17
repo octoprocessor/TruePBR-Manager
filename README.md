@@ -285,13 +285,45 @@ translations/   JSON translation files (en.json, zh_CN.json, ...)
 - Shaders are precompiled to `.cso` during build; the renderer works in ACEScg color space throughout.
 - PGPatcher JSON uses `rename` when the texture set name differs from the vanilla stem, and emits explicit `slotN` paths only when the generated path differs from PGPatcher's convention-based inference.
 
-## Roadmap
+## Features
 
-Planned features:
+Grouped by what you are actually doing, with the reason each part exists. The bullet list under *Current Status* above is the
+exhaustive one; this is the same tool explained.
 
-- [x] Built-in vanilla texture set conversion
-- [x] Import existing PBR mod (read mod directory with PGPatcher JSON + textures, reconstruct project)
-- [ ] Undo/redo
+**Sets and projects.** One `.tpbr` project holds as many texture sets as your mod needs, and each set is pinned to a single
+vanilla diffuse path — that path is what PGPatcher and Community Shaders match against, so a set's identity is its match
+path, not its folder name. Sets carry their own feature flags, material parameters and per-slot export settings, so a
+seasonal family can differ in coat strength and compression without becoming a second project.
+
+**Getting textures in.** Drag-and-drop accepts DDS, PNG, TGA, BMP and JPG per slot, and batch import fills slots from a
+file's suffix (`_n`, `_rmaos`, `_p`, `_s`, `_f`, `_cnr`) — which is how a folder exported from Substance or a photo editor
+usually arrives. RMAOS can be imported packed, or built from separate roughness/metalness/AO/specular channels and packed on
+export; the packed layout is R/G/B/A = roughness, metalness, AO, specular. DDS sources already in the target format and mip
+count are copied rather than re-encoded, so a re-export is cheap.
+
+**Converting vanilla textures.** *Vanilla texture set conversion* takes a Blinn-Phong set (diffuse, normal, specular,
+environment mask, cubemap, glow, parallax, backlight) and produces a True PBR set: RMAOS generated from what vanilla
+actually encodes, the cubemap's tint folded into metalness, per-texture gamma and brightness, and a live preview of the
+result before anything is written. This is the fastest way to bring an old retexture forward.
+
+**Importing an existing mod.** Point it at a mod folder and it reads that mod's `PBRNIFPatcher\*.json`, resolves the DDS
+files it names, and rebuilds a project you can edit — instead of re-authoring a set you already have.
+
+**Previewing.** A 2D view with zoom, pan and per-channel isolation for checking a mask or a packed channel, and a D3D12
+Cook-Torrance 3D view with IBL from an HDRI, skybox, TAA, HDR output, GT7 tone mapping and an ACEScg pipeline throughout.
+Debug channels isolate normal, roughness, metalness, AO and specular. In this fork the parameters use Community Shaders' real
+ranges, an alpha fade toggle makes coverage inspectable, DDS previews decode only the mip they show — which is what makes an
+8K set open at all — and the interlayer parallax offset mirrors CS exactly.
+
+**Exporting.** One click writes the PGPatcher JSON and the DDS set into a mod-shaped folder. Per-slot compression and export
+size, explicit `slotN` paths when the generated path differs from PGPatcher's convention, `rename` when the set name differs
+from the vanilla stem, pre-export validation for resolution and missing slots, and a cancellable background thread with
+progress. Re-exports skip textures that have not changed.
+
+**Everyday.** Recent-projects list, translations that reload at runtime, and settings (language, window geometry, last
+directory) kept in `TruePBR-Manager.ini` next to the executable so the tool is portable.
+
+**What it does not do yet.** There is no undo/redo. A destructive edit is undone by not saving, or by re-importing the mod.
 
 ## References
 
