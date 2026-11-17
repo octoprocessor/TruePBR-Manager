@@ -1,13 +1,57 @@
-**English** | [中文](README_zh.md)
+**English** | [中文](README_zh.md) *(upstream's translation)*
 
-# TruePBR Manager
+# TruePBR Manager — optimized fork
 
-[![CI](https://github.com/jiayev/TruePBR-Manager/actions/workflows/ci.yml/badge.svg)](https://github.com/jiayev/TruePBR-Manager/actions/workflows/ci.yml)
+**[octoprocessor](https://github.com/octoprocessor)'s fork of [jiayev/TruePBR-Manager](https://github.com/jiayev/TruePBR-Manager).**
+
+Upstream owns this tool and its design. This fork carries performance and correctness changes made while authoring a
+large True PBR landscape mod — a project with 8K sources, seasonal variants and coat materials, which is what exposed the
+problems below. Everything from *Current Status* down is upstream's documentation, kept as it is; the part above it is the
+difference.
+
+Upstream's CI: [![CI](https://github.com/jiayev/TruePBR-Manager/actions/workflows/ci.yml/badge.svg)](https://github.com/jiayev/TruePBR-Manager/actions/workflows/ci.yml)
 [![Release](https://github.com/jiayev/TruePBR-Manager/actions/workflows/release.yml/badge.svg)](https://github.com/jiayev/TruePBR-Manager/actions/workflows/release.yml)
+— the workflows exist in this fork too, but Actions has never run here, so the badges are upstream's rather than showing
+a permanent "no status".
+
+## What this fork changes
+
+| commit | what it changes, and why it mattered |
+|---|---|
+| `be0858b` | **Preview decodes only the mip it shows.** An 8K diffuse used to decode the whole mip chain before anything appeared; now the needed mip is decoded and the cache has a budget, so switching sets in an 8K project stops stalling. |
+| `c946250` | **Alpha fade toggle for the 3D preview, and Community Shaders' real parameter ranges.** The preview's ranges now match what CS actually reads, so a value that looks right in the preview is right in game, and the fade toggle makes alpha coverage inspectable — the thing that decides whether a painted vertex mask is doing anything. |
+| `48ade38` | **Interlayer parallax mirrored exactly.** The inner layer was sampled at a slightly different offset than CS computes (`eta`, `heightScale *= 0.5`), so a multilayer material's depth preview drifted from the game. |
+| `cd3436d` | **Fade tops out at 0.99.** At 1.0 the fade slider and the "opaque" toggle fought for the same state and the toggle lost. |
+| `b61e89d` | **The `multilayer` flag is now exported and imported.** PGPatcher reads every `coat_*` key *only* inside `if (multilayer == true)` (`PatcherMeshShaderTruePBR.cpp:1155-1216`) and outside that branch it resets the shader and **clears** `SLSF2_MULTI_LAYER_PARALLAX`. The exporter used the flag only as a gate for the coat keys and never wrote the key, so every coat value a project produced was inert in game, and on re-import the flag had to be guessed from `coat_normal`/`coat_diffuse`/`coat_parallax`. `multilayer: true` is now written when set and read back, so a project round-trips through PGPatcher JSON without losing it. |
+| `c5eec56` / `eed6372` | A spelling pass over new strings and its revert: the creator's British spellings in his own code stay as he wrote them (`cancelled`, `colour` where he used them); only text this fork adds follows American spelling. |
+
+## Getting a build
+
+There are no automated releases here. Build from source with the same toolchain upstream documents (`## Building` below),
+or take a packaged build from `dist\_release\` in a checkout — that folder holds
+`TruePBR-Manager-0.7.0-optimized-win64.zip` and its `.sha256`, built locally with MSVC and `windeployqt`.
+
+Two things worth knowing before reporting a problem here:
+
+* **A rebuild is a new binary.** Windows Defender/Avast give each unsigned build its own sandbox evaluation; a hash-based
+  exception from an earlier build does not carry over, and a path-based one only sticks if the path does not change.
+* **Re-export after updating.** A `.tpbr` project saved by an older build keeps the coat flags but not the `multilayer`
+  key; reopen and re-export once so the flag is written.
+
+## Licence and credit
+
+Unchanged from upstream: [CC BY-NC 4.0](LICENSE). The tool, its architecture and its documentation are
+[jiayev](https://github.com/jiayev)'s work; the changes listed above are
+[octoprocessor](https://github.com/octoprocessor)'s. Issues and pull requests about the tool itself belong upstream.
+
+---
+
+## Upstream documentation
 
 TruePBR Manager is a Windows desktop tool for assembling and exporting Skyrim True PBR texture sets compatible with [Community Shaders True PBR](https://github.com/doodlum/skyrim-community-shaders/wiki/True-PBR) and [PGPatcher](https://github.com/hakasapl/PGPatcher).
 
 Each texture set maps to one vanilla diffuse path and stores the textures, feature flags, parameters, and export settings needed to generate a mod-ready True PBR package.
+
 
 ## Current Status
 
