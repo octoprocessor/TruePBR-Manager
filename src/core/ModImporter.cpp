@@ -319,9 +319,10 @@ static PBRTextureSet parseEntry(const json& entry, const fs::path& modDir, std::
     ts.features.coatNormal = getBool(entry, "coat_normal", false);
     ts.features.coatDiffuse = getBool(entry, "coat_diffuse", false);
     ts.features.coatParallax = getBool(entry, "coat_parallax", false);
+    ts.features.multilayer = getBool(entry, "multilayer", false);
     ts.features.hair = getBool(entry, "hair", false);
 
-    // Multilayer is implied by coat_normal
+    // Multilayer is also implied by the coat flags, which is the only signal files written before the key existed carry
     if (ts.features.coatNormal || ts.features.coatDiffuse || ts.features.coatParallax)
     {
         ts.features.multilayer = true;

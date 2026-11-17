@@ -270,6 +270,11 @@ static json serializeEntryToJson(const PBRTextureSet& ts)
     entry["subsurface_foliage"] = ts.features.subsurfaceFoliage;
     entry["subsurface"] = ts.features.subsurface;
 
+    // The coat keys below are read by the patcher only inside a `multilayer: true` branch, so the flag itself has to be
+    // written or every coat value is inert. Emission is conditional so an untouched entry does not gain a false key.
+    if (ts.features.multilayer)
+        entry["multilayer"] = true;
+
     // Base parameters
     entry["specular_level"] = rounded3(ts.params.specularLevel);
     entry["roughness_scale"] = rounded3(ts.params.roughnessScale);
