@@ -27,16 +27,20 @@ a permanent "no status".
 
 ## Getting a build
 
-There are no automated releases here. Build from source with the same toolchain upstream documents (`## Building` below),
-or take a packaged build from `dist\_release\` in a checkout — that folder holds
-`TruePBR-Manager-0.7.0-optimized-win64.zip` and its `.sha256`, built locally with MSVC and `windeployqt`.
+**Releases** carry a packaged build: [0P1.1.0](https://github.com/octoprocessor/TruePBR-Manager/releases/tag/0P1.1.0)
+is a portable folder — unpack it anywhere and run `TruePBR-Manager.exe`, no installer — with the archive's SHA-256 beside
+it. Nothing is built by CI here, so a release only exists when one is made by hand from `dist\_release\`.
+
+Building from source uses the same toolchain upstream documents (`## Building` below); `cmake --build` with
+`-DTRUEPBR_PACK=ON` produces the zip in `dist\package\`.
 
 Two things worth knowing before reporting a problem here:
 
 * **A rebuild is a new binary.** Windows Defender/Avast give each unsigned build its own sandbox evaluation; a hash-based
-  exception from an earlier build does not carry over, and a path-based one only sticks if the path does not change.
-* **Re-export after updating.** A `.tpbr` project saved by an older build keeps the coat flags but not the `multilayer`
-  key; reopen and re-export once so the flag is written.
+  exception from an earlier build does not carry over, and a path-based one only sticks if the path does not change. A
+  scan after updating is expected, not a detection.
+* **Re-export after updating.** A `.tpbr` project saved by a build older than 0P1.1.0 keeps the coat flags but not the
+  `multilayer` key; reopen and re-export once so the flag is written.
 
 ## Versioning
 
