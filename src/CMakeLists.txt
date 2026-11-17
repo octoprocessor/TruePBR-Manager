@@ -460,7 +460,7 @@ option(TRUEPBR_PACK "Create a zip archive of the dist folder after build" OFF)
 if(TRUEPBR_PACK)
     set(PACK_DIR "${CMAKE_SOURCE_DIR}/dist/package")
     string(TIMESTAMP _PACK_TS "%Y%m%d%H%M%S" UTC)
-    set(PACK_NAME "TruePBR-Manager-v${PROJECT_VERSION}-${_PACK_TS}")
+    set(PACK_NAME "TruePBR-Manager-v${TPBR_VERSION_PREFIX}${PROJECT_VERSION}-${_PACK_TS}")
     set(PACK_STAGING_BASE "${CMAKE_BINARY_DIR}/_pack_staging")
     set(STAGING_DIR "${PACK_STAGING_BASE}/TruePBR-Manager")
 

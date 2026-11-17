@@ -38,6 +38,13 @@ Two things worth knowing before reporting a problem here:
 * **Re-export after updating.** A `.tpbr` project saved by an older build keeps the coat flags but not the `multilayer`
   key; reopen and re-export once so the flag is written.
 
+## Versioning
+
+Releases here are SemVer with a `0P` prefix — `0P1.1.0` — and the line starts at the fork point: upstream `v0.7.0`, as
+forked, is **0P1.0.0**. The numbers are SemVer: `MAJOR` when a `.tpbr` project or an exported JSON stops loading, `MINOR`
+for new capability or a batch of behavioural fixes, `PATCH` for a single small fix. Upstream's numbers are not reused, so
+`0P1.x` always means "this fork, after 0.7.0". [`CHANGELOG.md`](CHANGELOG.md) carries the detail per release.
+
 ## Licence and credit
 
 Unchanged from upstream: [CC BY-NC 4.0](LICENSE). The tool, its architecture and its documentation are
