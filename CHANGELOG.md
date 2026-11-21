@@ -6,6 +6,56 @@ Versions are SemVer with a `0P` prefix, and this line starts at the fork point: 
 behavioural fixes, `PATCH` for a small fix on its own. Upstream's own version numbers are not reused, so `0P1.x` says
 "this fork, after 0.7.0".
 
+## 0P1.2.0 - 2026-11-21
+
+Adds the authoring passes that were still manual, and makes the feature flags authoritative
+over what gets written. No `.tpbr` or PGPatcher JSON format break: a project from 0P1.1.0 still
+loads, and absent keys keep their old meaning.
+
+### Added
+
+- **The normal's green channel is decided from the displacement map.** A correlation test against
+  the displacement ships beside the normal, in the same shape as the external arbiter already used
+  for these textures: green should track `+dH/dy` and red `-dH/dx`, and an inverted *height* flips
+  both, so a map reading green-negative **and** red-negative has exactly one wrong channel and is
+  the only case acted on. It runs when both maps are present, sets the flag, and then hands the
+  decision to the user -- the next click owns it and nothing overwrites it. An inconclusive test
+  (below the noise floor, too few samples, unreadable file) changes nothing and retries later.
+- **The same test on the coat normal's RGB**, against the same displacement.
+- **Features are switched on from the maps actually present.** Fuzz, subsurface, coat colour, coat
+  normal, parallax and emissive follow their slots; `multilayer` follows any coat, fuzz or glint
+  feature, because PGPatcher ignores every `coat_*` key outside a multilayer entry.
+- **Coat normal and roughness from two files.** A separate mode takes a coat normal and a roughness
+  map, packs them into the `_cnr` the patcher expects (normal RGB with its own alpha dropped,
+  roughness read from R into A, roughness resized to the normal when they differ), and toggles back
+  to a single packed file without losing either path.
+- **Per-texture linear inversion.** An `Inv` toggle on albedo, fuzz, subsurface, coat colour, the
+  coat pair and displacement writes `255 - v` at preview and export time, for flipping a mask's
+  coverage or a height map's polarity. The source file is never modified.
+- **Import pickers open in the folder of whatever already occupies that slot**, falling back to a
+  sibling already loaded in the set, so preloading a folder and then choosing a mask lands in the
+  right place.
+
+### Changed
+
+- **The feature flag decides what is written.** A map whose feature is off is no longer exported,
+  so it can stay loaded for reference without being written or implied by the JSON. Fuzz and the
+  coat pair share a slot, and subsurface and coat colour share one, so this is what lets two maps
+  sit in the same slot and still write exactly one.
+- **Features that cannot coexist can no longer both be on.** Precedence follows the patcher rather
+  than taste: `hair` clears everything (it owns `SLSF2_BACK_LIGHTING`, which the coat normal also
+  drives and applies after it); `multilayer` clears glint, fuzz, subsurface and foliage (they are
+  one `else if` chain, so one shader and the others' parameters are never read); `fuzz` clears glint
+  and the coat normal (`_f.dds` is written into the same slot after `_cnr.dds`). The blocked toggle
+  is switched off so the JSON stays honest, but stays visible and marked with the reason.
+- **`displacementScale` now defaults to 0.5**, from 1.0.
+- **`specularLevel` rises to 0.08** when the packed RMAOS alpha carries data or a non-white specular
+  channel map is loaded -- and only while the value is still the default, so a hand-set value
+  survives.
+- **The preview and the export now run the same transforms.** The normal's G flip had been
+  hand-written at three call sites and the new inversion reached none of them; both now come from
+  one function, so what is drawn is what would be written.
+
 ## 0P1.1.0 — 2026-11-17
 
 Everything the fork changed after it was taken from upstream v0.7.0. No project or JSON format break: a `.tpbr` and a

@@ -41,6 +41,19 @@ enum class RMAOSSourceMode
     SeparateChannels,
 };
 
+/// Defines how the coat (multilayer) normal and roughness are supplied.
+///
+/// `PackedTexture` is the historical `_cnr` layout: coat normal in RGB, coat
+/// roughness in A.  `SeparateMaps` takes a normal map and a roughness map as two
+/// files, the same shape RMAOS already offers, so a pipeline that exports
+/// roughness separately does not have to pack it. Because the roughness lives in
+/// its own file in that mode, the normal's **alpha channel is dropped** on export.
+enum class CoatSourceMode
+{
+    PackedTexture,
+    SeparateMaps,
+};
+
 enum class TextureMatchMode
 {
     Auto,
@@ -95,6 +108,12 @@ const char* rmaosSourceModeKey(RMAOSSourceMode mode);
 /// Parse a serialized RMAOS source mode key.
 bool tryParseRmaosSourceMode(const std::string& value, RMAOSSourceMode& mode);
 
+/// Get stable serialization key for the coat source mode.
+const char* coatSourceModeKey(CoatSourceMode mode);
+
+/// Parse a serialized coat source mode key.
+bool tryParseCoatSourceMode(const std::string& value, CoatSourceMode& mode);
+
 /// Get stable serialization key for the vanilla match mode.
 const char* textureMatchModeKey(TextureMatchMode mode);
 
@@ -110,6 +129,34 @@ bool tryParseTextureMatchMode(const std::string& value, TextureMatchMode& mode);
 /// original size.
 std::vector<std::pair<int, int>> generateExportSizeOptions(int nativeWidth, int nativeHeight);
 
+struct PBRTextureSet; // defined below
+struct NormalConventionResult;
+
+/// What applyAutoDefaults() changed, for a status line.
+struct AutoDefaultResult
+{
+    bool featuresChanged = false; ///< at least one PBRFeatureFlags bit was switched on
+    bool normalArbitrated = false; ///< the convention test produced a verdict
+    bool normalFlipped = false;    ///< ... and it flipped the normal's green channel
+    bool coatArbitrated = false;
+    bool coatFlipped = false;
+    float specularLevel = 0.0f; ///< value left in place, for logging
+    float displacementScale = 0.0f;
+    const char* conventionText = "";
+    double greenCorrelation = 0.0;
+    double redCorrelation = 0.0;
+};
+
+/// Fill in what the loaded maps imply. Three jobs, each guarded so a user choice survives:
+///   1. switch on the feature flags that the present slots require (fuzz, subsurface,
+///      coat normal, parallax, emissive, glint, model coat colour);
+///   2. apply the standing defaults where the user has not touched the value --
+///      a specular level still at 0.04 becomes 0.08 once real specular data exists;
+///   3. decide the normal's green channel from the displacement map, and the coat
+///      normal's from the same map, while each is still marked automatic.
+/// Safe to call after every slot change: it is idempotent and never overwrites.
+AutoDefaultResult applyAutoDefaults(PBRTextureSet& set);
+
 // ─── Texture Entry ──────────────────────────────────────────
 
 struct TextureEntry
@@ -121,6 +168,29 @@ struct TextureEntry
     int channels = 0;
     TextureAlphaMode alphaMode = TextureAlphaMode::Unknown;
     std::string format; // "png", "dds", "tga", etc.
+
+    /// Invert every channel linearly (v -> 255 - v) at preview and export time.
+    /// For a single-channel mask this flips coverage; for the displacement map it
+    /// flips the height, which is what an interlayer parallax setup can need.
+    /// The source file is never modified.
+    bool invertLinear = false;
+};
+
+/// Two-file coat input, used when PBRTextureSet::coatSourceMode is SeparateMaps.
+struct CoatSeparateMaps
+{
+    std::filesystem::path normalPath;    ///< Coat normal, RGB (alpha is dropped on export)
+    std::filesystem::path roughnessPath; ///< Coat roughness, read from R
+
+    int normalWidth = 0;
+    int normalHeight = 0;
+    int roughnessWidth = 0;
+    int roughnessHeight = 0;
+
+    bool valid() const
+    {
+        return !normalPath.empty() && !roughnessPath.empty();
+    }
 };
 
 struct ChannelMapEntry
@@ -149,13 +219,27 @@ struct PBRFeatureFlags
     bool hair = false;
 };
 
+/// Reduce a feature set to a combination PGPatcher can actually express.
+///
+/// Precedence is **hair > multilayer > fuzz > glint**, and it follows from the patcher source rather
+/// than from taste (`PatcherMeshShaderTruePBR.cpp`):
+///   * `multilayer`, `glint` and `fuzz` are an `else if` chain, so only one of them can shape a
+///     shader; the other two's parameters are never read.
+///   * `hair` and `coat_normal` both drive `SLSF2_BACK_LIGHTING`, and the coat value is applied
+///     after the hair one, so a coat normal silently cancels hair.
+///   * `fuzz` writes `_f.dds` into the same slot after `coat_normal` writes `_cnr.dds`, so the two
+///     cannot both reach a shape.
+///   * `subsurface_foliage`, `subsurface` and `coat_diffuse` share the `_s.dds` slot; the user's
+///     rule is that multilayer wins over subsurface and foliage, and that is what this enforces.
+PBRFeatureFlags normaliseFeatureFlags(PBRFeatureFlags flags);
+
 // ─── PBR Parameters ────────────────────────────────────────
 
 struct PBRParameters
 {
     float specularLevel = 0.04f;
     float roughnessScale = 1.0f;
-    float displacementScale = 1.0f;
+    float displacementScale = 0.5f;
     float subsurfaceOpacity = 1.0f;
     std::array<float, 3> subsurfaceColor = {1.0f, 1.0f, 1.0f};
 
@@ -240,6 +324,22 @@ struct PBRTextureSet
     /// and export time. The source file is never modified. Used for DirectX↔OpenGL
     /// normal map convention conversion.
     bool flipNormalG = false;
+
+    /// True while the green-channel decision is still the tool's to make. Set false
+    /// the moment the user toggles the button, after which nothing overrides it.
+    /// A set that has been arbitrated once also clears it, so a reload does not
+    /// silently re-decide a hand-made choice.
+    bool flipNormalGAuto = true;
+
+    /// The same decision for the coat normal's RGB, tested against displacement.
+    bool flipCoatNormalG = false;
+    bool flipCoatNormalGAuto = true;
+
+    /// How the coat normal and roughness are supplied.
+    CoatSourceMode coatSourceMode = CoatSourceMode::PackedTexture;
+
+    /// The two-file coat input, used when coatSourceMode is SeparateMaps.
+    CoatSeparateMaps coatMaps;
 
     std::string tags;
     std::string notes;

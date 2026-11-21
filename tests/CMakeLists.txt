@@ -41,3 +41,24 @@ target_link_libraries(TruePBR-JsonTests PRIVATE
 )
 
 gtest_discover_tests(TruePBR-JsonTests)
+
+# Normal-convention maths: pure functions over pixel buffers, so this target needs
+# nothing beyond the core library. It is separate for the same reason as JsonTests --
+# TruePBR-Tests does not link in this tree.
+add_executable(TruePBR-NormalTests
+    test_NormalConvention.cpp
+    test_FeatureFlags.cpp
+)
+
+set_target_properties(TruePBR-NormalTests PROPERTIES
+    AUTOMOC OFF
+    AUTORCC OFF
+    AUTOUIC OFF
+)
+
+target_link_libraries(TruePBR-NormalTests PRIVATE
+    TruePBR-Core
+    GTest::gtest_main
+)
+
+gtest_discover_tests(TruePBR-NormalTests)

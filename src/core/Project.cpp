@@ -381,6 +381,43 @@ static json textureSetToJson(const PBRTextureSet& ts)
     if (ts.flipNormalG)
         j["flip_normal_g"] = true;
 
+    // Whether that flag is still the tool's to decide. Written explicitly so a set the
+    // user has settled reopens settled: absent means "still automatic" for old projects.
+    if (!ts.flipNormalGAuto || ts.flipNormalG)
+        j["flip_normal_g_auto"] = ts.flipNormalGAuto;
+
+    if (ts.flipCoatNormalG)
+        j["flip_coat_normal_g"] = true;
+    if (!ts.flipCoatNormalGAuto || ts.flipCoatNormalG)
+        j["flip_coat_normal_g_auto"] = ts.flipCoatNormalGAuto;
+
+    // Coat source mode and its two files
+    if (ts.coatSourceMode != CoatSourceMode::PackedTexture)
+    {
+        j["coat_source_mode"] = coatSourceModeKey(ts.coatSourceMode);
+    }
+    if (ts.coatMaps.valid())
+    {
+        j["coat_normal_path"] = ts.coatMaps.normalPath.string();
+        j["coat_roughness_path"] = ts.coatMaps.roughnessPath.string();
+        j["coat_maps_size"] = json::array({ts.coatMaps.normalWidth, ts.coatMaps.normalHeight,
+                                          ts.coatMaps.roughnessWidth, ts.coatMaps.roughnessHeight});
+    }
+
+    // Per-slot linear inversion, only where it is on, so an untouched set gains no keys.
+    json inverts = json::object();
+    for (const auto& [slot, entry] : ts.textures)
+    {
+        if (entry.invertLinear)
+        {
+            inverts[slotToString(slot)] = true;
+        }
+    }
+    if (!inverts.empty())
+    {
+        j["invert_linear"] = inverts;
+    }
+
     return j;
 }
 
@@ -501,6 +538,48 @@ static PBRTextureSet textureSetFromJson(const json& j)
 
     if (j.contains("flip_normal_g"))
         ts.flipNormalG = j["flip_normal_g"].get<bool>();
+
+    // Absent means automatic, which is the state an older project was in.
+    ts.flipNormalGAuto = j.contains("flip_normal_g_auto") ? j["flip_normal_g_auto"].get<bool>() : true;
+    ts.flipCoatNormalG = j.contains("flip_coat_normal_g") ? j["flip_coat_normal_g"].get<bool>() : false;
+    ts.flipCoatNormalGAuto = j.contains("flip_coat_normal_g_auto") ? j["flip_coat_normal_g_auto"].get<bool>() : true;
+
+    if (j.contains("coat_source_mode") && j["coat_source_mode"].is_string())
+    {
+        CoatSourceMode mode;
+        if (tryParseCoatSourceMode(j["coat_source_mode"].get<std::string>(), mode))
+        {
+            ts.coatSourceMode = mode;
+        }
+    }
+    if (j.contains("coat_normal_path") && j["coat_normal_path"].is_string())
+    {
+        ts.coatMaps.normalPath = j["coat_normal_path"].get<std::string>();
+    }
+    if (j.contains("coat_roughness_path") && j["coat_roughness_path"].is_string())
+    {
+        ts.coatMaps.roughnessPath = j["coat_roughness_path"].get<std::string>();
+    }
+    if (j.contains("coat_maps_size") && j["coat_maps_size"].is_array() && j["coat_maps_size"].size() == 4)
+    {
+        ts.coatMaps.normalWidth = j["coat_maps_size"][0].get<int>();
+        ts.coatMaps.normalHeight = j["coat_maps_size"][1].get<int>();
+        ts.coatMaps.roughnessWidth = j["coat_maps_size"][2].get<int>();
+        ts.coatMaps.roughnessHeight = j["coat_maps_size"][3].get<int>();
+    }
+
+    if (j.contains("invert_linear") && j["invert_linear"].is_object())
+    {
+        for (auto& [key, val] : j["invert_linear"].items())
+        {
+            const auto slot = slotFromString(key);
+            const auto it = ts.textures.find(slot);
+            if (it != ts.textures.end())
+            {
+                it->second.invertLinear = val.get<bool>();
+            }
+        }
+    }
 
     if (!j.contains("rmaos_source_mode"))
     {

@@ -399,10 +399,43 @@ bool ModExporter::exportTextures(const PBRTextureSet& textureSet, const fs::path
 {
     bool allOk = true;
 
+    // The feature flag is the authority, not the presence of a file. A map can sit in the set for
+    // reference while its feature is off, and it must then neither be written nor implied by the
+    // JSON. Fuzz and the coat pair can share a slot and Subsurface and Coat Colour can share one,
+    // so which of them reaches disk is decided here, by the flags.
+    const auto featureAllowsSlot = [&textureSet](PBRTextureSlot slot) -> bool
+    {
+        const auto& f = textureSet.features;
+        switch (slot)
+        {
+        case PBRTextureSlot::Displacement:
+            return f.parallax;
+        case PBRTextureSlot::Emissive:
+            return f.emissive;
+        case PBRTextureSlot::Fuzz:
+            return f.fuzz;
+        case PBRTextureSlot::Subsurface:
+            return f.subsurface || f.subsurfaceFoliage;
+        case PBRTextureSlot::CoatColor:
+            return f.coatDiffuse;
+        case PBRTextureSlot::CoatNormalRoughness:
+            // The same slot carries fuzz's _f.dds, so either feature justifies writing it.
+            return f.coatNormal || f.fuzz;
+        default:
+            return true; // Albedo, Normal and RMAOS are the PBR baseline
+        }
+    };
+
     for (const auto& [slot, entry] : textureSet.textures)
     {
         if (slot == PBRTextureSlot::RMAOS && textureSet.rmaosSourceMode == RMAOSSourceMode::SeparateChannels)
         {
+            continue;
+        }
+
+        if (!featureAllowsSlot(slot))
+        {
+            spdlog::info("ModExporter: skipping {} -- its feature is off", slotDisplayName(slot));
             continue;
         }
 
@@ -429,17 +462,20 @@ bool ModExporter::exportTextures(const PBRTextureSet& textureSet, const fs::path
         // For a G-flipped normal map the deterministic result is not enough on its own: a flip that
         // was just switched on would be skipped and leave the old, unflipped file behind, so require
         // a record that this exact source was already written with the same flip state.
-        const bool isFlippedNormal = (slot == PBRTextureSlot::Normal && textureSet.flipNormalG);
+        const bool flipG = (slot == PBRTextureSlot::Normal && textureSet.flipNormalG);
+        const bool invertAll = entry.invertLinear;
+        const bool isFlippedNormal = flipG;
         const bool flipIsKnown = !isFlippedNormal || flipMatches(outPath, entry.sourcePath, true);
-        if (flipIsKnown && isOutputUpToDate(entry.sourcePath, outPath, compressionMode, targetW, targetH))
+        if (!invertAll && flipIsKnown &&
+            isOutputUpToDate(entry.sourcePath, outPath, compressionMode, targetW, targetH))
         {
             spdlog::info("ModExporter: skipping unchanged {}", outPath.filename().string());
             continue;
         }
 
-        // For Normal slot with flipNormalG enabled, we need custom export logic
-        // to flip the G channel without modifying the source file
-        if (slot == PBRTextureSlot::Normal && textureSet.flipNormalG)
+        // Two per-texture transforms need their own write: flipping the normal's G channel for a
+        // DirectX/OpenGL conversion, and inverting every channel linearly for a mask or a height map.
+        if (flipG || invertAll)
         {
             fs::create_directories(outPath.parent_path());
             int width = 0, height = 0;
@@ -451,10 +487,17 @@ bool ModExporter::exportTextures(const PBRTextureSet& textureSet, const fs::path
                 continue;
             }
 
-            // Flip G channel
             const int count = width * height;
-            for (int i = 0; i < count; ++i)
-                rgbaPixels[i * 4 + 1] = 255 - rgbaPixels[i * 4 + 1];
+            if (flipG)
+            {
+                for (int i = 0; i < count; ++i)
+                    rgbaPixels[i * 4 + 1] = 255 - rgbaPixels[i * 4 + 1];
+            }
+            if (invertAll)
+            {
+                for (size_t i = 0; i < rgbaPixels.size(); ++i)
+                    rgbaPixels[i] = static_cast<uint8_t>(255 - rgbaPixels[i]);
+            }
 
             // Resize if needed
             if (targetW > 0 && targetH > 0 && (targetW != width || targetH != height))
@@ -473,8 +516,10 @@ bool ModExporter::exportTextures(const PBRTextureSet& textureSet, const fs::path
             }
             else
             {
-                recordFlip(outPath, entry.sourcePath, true);
-                spdlog::info("ModExporter: exported {} (G flipped)", outPath.string());
+                if (flipG)
+                    recordFlip(outPath, entry.sourcePath, true);
+                spdlog::info("ModExporter: exported {}{}{}", outPath.string(), flipG ? " (G flipped)" : "",
+                             invertAll ? " (inverted)" : "");
             }
             continue;
         }
@@ -493,6 +538,66 @@ bool ModExporter::exportTextures(const PBRTextureSet& textureSet, const fs::path
         else
         {
             spdlog::info("ModExporter: exported {}", outPath.string());
+        }
+    }
+
+    // ─── Coat normal + roughness from two files ───
+    // In SeparateMaps mode the coat normal and the coat roughness arrive as two files, so the
+    // packdown into the single _cnr PGPatcher expects happens here: coat normal in RGB with its
+    // own alpha dropped (the roughness lives in its own file in this mode), roughness in A.
+    if (textureSet.coatSourceMode == CoatSourceMode::SeparateMaps && textureSet.coatMaps.valid() &&
+        (textureSet.features.coatNormal || textureSet.features.fuzz))
+    {
+        const auto outPath = buildOutputPath(modFolder, textureSet, PBRTextureSlot::CoatNormalRoughness);
+        const auto compIt = textureSet.exportCompression.find(PBRTextureSlot::CoatNormalRoughness);
+        const auto compression = compIt != textureSet.exportCompression.end()
+                                     ? compIt->second
+                                     : defaultCompressionForSlot(PBRTextureSlot::CoatNormalRoughness);
+
+        int nw = 0, nh = 0;
+        std::vector<uint8_t> normalPixels;
+        int rw = 0, rh = 0;
+        std::vector<uint8_t> roughPixels;
+        if (!loadTextureRGBA(textureSet.coatMaps.normalPath, nw, nh, normalPixels))
+        {
+            spdlog::error("ModExporter: failed to load coat normal {}", textureSet.coatMaps.normalPath.string());
+            allOk = false;
+        }
+        else if (!loadTextureRGBA(textureSet.coatMaps.roughnessPath, rw, rh, roughPixels))
+        {
+            spdlog::error("ModExporter: failed to load coat roughness {}",
+                          textureSet.coatMaps.roughnessPath.string());
+            allOk = false;
+        }
+        else
+        {
+            if (rw != nw || rh != nh)
+            {
+                std::vector<uint8_t> resized;
+                resizeRGBA(roughPixels, rw, rh, resized, nw, nh);
+                roughPixels = std::move(resized);
+                rw = nw;
+                rh = nh;
+            }
+
+            const size_t count = static_cast<size_t>(nw) * nh;
+            for (size_t i = 0; i < count; ++i)
+            {
+                normalPixels[i * 4 + 3] = roughPixels[i * 4 + 0]; // roughness from R
+            }
+
+            fs::create_directories(outPath.parent_path());
+            if (!saveTextureWithCompression(outPath, PBRTextureSlot::CoatNormalRoughness, nw, nh, normalPixels,
+                                            compression))
+            {
+                spdlog::error("ModExporter: failed to export coat maps -> {}", outPath.string());
+                allOk = false;
+            }
+            else
+            {
+                spdlog::info("ModExporter: exported {} (coat normal + roughness packed, alpha from roughness)",
+                             outPath.string());
+            }
         }
     }
 

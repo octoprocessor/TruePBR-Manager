@@ -37,6 +37,7 @@ class FeatureTogglePanel : public QWidget
 
     void setupUI();
     void onAnyToggled();
+    void updateCompatibility(const PBRFeatureFlags& flags);
     void retranslateUi();
 
   protected:

@@ -582,6 +582,48 @@ void SlotEditorWidget::addSlotRow(PBRTextureSlot slot, const QString& label, boo
         connect(row.flipGButton, &QPushButton::clicked, this, [this]() { emit flipNormalGRequested(); });
     }
 
+    // Linear inversion applies to anything whose channels are read as coverage or height:
+    // albedo alpha, fuzz, subsurface, coat colour/strength, the packed coat pair, and the
+    // displacement map (an inverted height is a legitimate look, not an error).
+    switch (slot)
+    {
+    case PBRTextureSlot::Diffuse:
+    case PBRTextureSlot::Fuzz:
+    case PBRTextureSlot::Subsurface:
+    case PBRTextureSlot::CoatColor:
+    case PBRTextureSlot::CoatNormalRoughness:
+    case PBRTextureSlot::Displacement:
+    {
+        row.invertButton = new QPushButton(tr("Inv"), row.container);
+        row.invertButton->setFixedWidth(38);
+        row.invertButton->setCheckable(true);
+        row.invertButton->setToolTip(tr("Invert this texture linearly (v -> 255 - v) at preview and export.\n\n"
+                                        "Useful for flipping a mask's coverage, and for inverting a height map\n"
+                                        "when an interlayer parallax setup needs the opposite polarity.\n"
+                                        "The source file is never modified."));
+        row.invertButton->setEnabled(false); // enabled once a texture is loaded
+        layout->addWidget(row.invertButton);
+        connect(row.invertButton, &QPushButton::clicked, this,
+                [this, slot]() { emit invertLinearRequested(slot); });
+        break;
+    }
+    default:
+        break;
+    }
+
+    // The coat pair can either arrive packed in one _cnr or as a normal plus a roughness file.
+    if (slot == PBRTextureSlot::CoatNormalRoughness)
+    {
+        row.coatModeButton = new QPushButton(tr("2 files"), row.container);
+        row.coatModeButton->setFixedWidth(60);
+        row.coatModeButton->setCheckable(true);
+        row.coatModeButton->setToolTip(tr("Supply the coat as two files instead of one packed _cnr:\n"
+                                          "a coat normal (RGB, its alpha is dropped) and a separate\n"
+                                          "roughness map. They are packed into _cnr on export."));
+        layout->addWidget(row.coatModeButton);
+        connect(row.coatModeButton, &QPushButton::clicked, this, [this]() { emit coatSourceModeRequested(); });
+    }
+
     // Add "Auto-Detect" button only for the Diffuse slot
     if (slot == PBRTextureSlot::Diffuse)
     {
@@ -927,6 +969,32 @@ void SlotEditorWidget::setTextureSet(const PBRTextureSet& ts)
             it->second.flipGButton->blockSignals(true);
             it->second.flipGButton->setChecked(ts.flipNormalG);
             it->second.flipGButton->blockSignals(false);
+        }
+    }
+
+    // Update the per-slot invert toggles
+    for (auto& [slot, row] : m_slotRows)
+    {
+        if (!row.invertButton)
+        {
+            continue;
+        }
+        const auto entryIt = ts.textures.find(slot);
+        const bool hasTexture = entryIt != ts.textures.end() && !entryIt->second.sourcePath.empty();
+        row.invertButton->blockSignals(true);
+        row.invertButton->setChecked(hasTexture && entryIt->second.invertLinear);
+        row.invertButton->setEnabled(hasTexture);
+        row.invertButton->blockSignals(false);
+    }
+
+    // Coat mode toggle reflects whichever source is in force
+    {
+        auto it = m_slotRows.find(PBRTextureSlot::CoatNormalRoughness);
+        if (it != m_slotRows.end() && it->second.coatModeButton)
+        {
+            it->second.coatModeButton->blockSignals(true);
+            it->second.coatModeButton->setChecked(ts.coatSourceMode == CoatSourceMode::SeparateMaps);
+            it->second.coatModeButton->blockSignals(false);
         }
     }
 

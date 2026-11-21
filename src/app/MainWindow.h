@@ -77,6 +77,8 @@ class MainWindow : public QMainWindow
     void onMatchAliasesChanged(const QStringList& aliases);
     void onSlotPathOverrideChanged(PBRTextureSlot slot, const QString& path);
     void onFlipNormalG();
+    void onInvertLinear(tpbr::PBRTextureSlot slot);
+    void onCoatSourceMode();
     void onAutoDetect();
     void onPreviewResolutionChanged(int maxSize);
     void onImportFolderTree();

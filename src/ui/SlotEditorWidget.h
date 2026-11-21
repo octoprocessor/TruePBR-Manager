@@ -114,6 +114,11 @@ class SlotEditorWidget : public QWidget
     /// Emitted when the user requests to flip the Normal map's G channel
     void flipNormalGRequested();
 
+    /// Emitted when the user toggles linear inversion for a slot's texture
+    void invertLinearRequested(PBRTextureSlot slot);
+
+    /// Emitted when the user switches the coat normal + roughness between one file and two
+    void coatSourceModeRequested();
   private:
     void setupUI();
     void addSlotRow(PBRTextureSlot slot, const QString& label, bool visible);
@@ -132,6 +137,8 @@ class SlotEditorWidget : public QWidget
         QPushButton* importButton = nullptr;
         QPushButton* clearButton = nullptr;
         QPushButton* flipGButton = nullptr; ///< "Flip G" button (Normal slot only)
+        QPushButton* invertButton = nullptr; ///< "Inv" toggle for masks, coat colour and displacement
+        QPushButton* coatModeButton = nullptr; ///< "2 files" toggle (Coat Normal + Roughness row only)
         QComboBox* compressionCombo = nullptr;
         QComboBox* exportSizeCombo = nullptr;
         QWidget* container = nullptr;

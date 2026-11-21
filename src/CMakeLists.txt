@@ -4,6 +4,10 @@ set(CORE_SOURCES
     core/Project.cpp
     core/PBRTextureSet.h
     core/PBRTextureSet.cpp
+    core/NormalConvention.h
+    core/NormalConvention.cpp
+    core/NormalConventionIo.cpp
+    core/AutoDefaults.cpp
     core/TextureImporter.h
     core/TextureImporter.cpp
     core/ChannelPacker.h
@@ -133,6 +137,8 @@ set(CORE_LIB_SOURCES
     core/Project.cpp
     core/PBRTextureSet.h
     core/PBRTextureSet.cpp
+    core/NormalConvention.h
+    core/NormalConvention.cpp
     core/TextureSetValidator.h
     core/TextureSetValidator.cpp
     core/JsonExporter.h

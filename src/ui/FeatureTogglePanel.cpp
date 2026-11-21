@@ -40,7 +40,74 @@ void FeatureTogglePanel::setupUI()
 
 void FeatureTogglePanel::onAnyToggled()
 {
-    emit featuresChanged(getFeatures());
+    // A feature that cannot coexist with another cannot be left switched on: the flag is what
+    // decides whether the key reaches the JSON and whether the texture is written, so a silently
+    // ignored "on" would be a lie. The rules live in core so they are unit-tested; this only
+    // reflects them.
+    const auto f = normaliseFeatureFlags(getFeatures());
+
+    const bool changed = (f.emissive != m_emissive->isChecked() || f.parallax != m_parallax->isChecked() ||
+                          f.subsurface != m_subsurface->isChecked() ||
+                          f.subsurfaceFoliage != m_subsurfaceFoliage->isChecked() ||
+                          f.multilayer != m_multilayer->isChecked() || f.coatNormal != m_coatNormal->isChecked() ||
+                          f.coatDiffuse != m_coatDiffuse->isChecked() ||
+                          f.coatParallax != m_coatParallax->isChecked() || f.fuzz != m_fuzz->isChecked() ||
+                          f.glint != m_glint->isChecked() || f.hair != m_hair->isChecked());
+    if (changed)
+    {
+        setFeatures(f);
+    }
+    updateCompatibility(f);
+
+    emit featuresChanged(f);
+}
+
+void FeatureTogglePanel::updateCompatibility(const PBRFeatureFlags& f)
+{
+    auto mark = [](QCheckBox* cb, const QString& reason)
+    {
+        cb->setEnabled(false);
+        cb->setStyleSheet(QStringLiteral("color: #c0392b;"));
+        cb->setToolTip(reason);
+    };
+    auto clear = [](QCheckBox* cb)
+    {
+        cb->setEnabled(true);
+        cb->setStyleSheet(QString());
+        cb->setToolTip(QString());
+    };
+
+    QCheckBox* all[] = {m_emissive,   m_parallax,   m_subsurface,  m_subsurfaceFoliage,
+                        m_multilayer, m_coatNormal, m_coatDiffuse, m_coatParallax,
+                        m_fuzz,       m_glint,      m_hair};
+    for (auto* cb : all)
+        clear(cb);
+
+    const QString hairReason = tr("Hair Model cannot be combined with any other feature.");
+    const QString mlpReason = tr("Multilayer Parallax cannot be combined with this feature.");
+    const QString fuzzReason = tr("Fuzz cannot be combined with this feature.");
+
+    if (f.hair)
+    {
+        for (auto* cb : all)
+            if (cb != m_hair)
+                mark(cb, hairReason);
+        return;
+    }
+
+    if (f.multilayer)
+    {
+        mark(m_glint, mlpReason);
+        mark(m_fuzz, mlpReason);
+        mark(m_subsurface, mlpReason);
+        mark(m_subsurfaceFoliage, mlpReason);
+    }
+
+    if (f.fuzz)
+    {
+        mark(m_glint, fuzzReason);
+        mark(m_coatNormal, fuzzReason);
+    }
 }
 
 void FeatureTogglePanel::setFeatures(const PBRFeatureFlags& f)
@@ -67,6 +134,8 @@ void FeatureTogglePanel::setFeatures(const PBRFeatureFlags& f)
 
     for (auto* cb : all)
         cb->blockSignals(false);
+
+    updateCompatibility(f);
 }
 
 PBRFeatureFlags FeatureTogglePanel::getFeatures() const

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(TruePBR-Manager VERSION 1.1.0 LANGUAGES CXX)
+project(TruePBR-Manager VERSION 1.2.0 LANGUAGES CXX)
 
 # Releases of this fork are versioned `0P<major>.<minor>.<patch>`. CMake needs plain integers, so the prefix lives here and
 # is prepended only when the string is built (Version.h, the pack name). The numbers follow SemVer and start at the fork

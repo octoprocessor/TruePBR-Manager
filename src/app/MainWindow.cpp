@@ -8,6 +8,7 @@
 #include "core/TextureSetValidator.h"
 #include "core/TranslationManager.h"
 #include "core/VanillaConverter.h"
+#include "utils/ImageUtils.h"
 #include "ui/FeatureTogglePanel.h"
 #include "ui/ParameterPanel.h"
 #include "ui/SlotEditorWidget.h"
@@ -875,6 +876,8 @@ void MainWindow::setupCentralWidget()
     connect(m_slotEditor, &SlotEditorWidget::matchAliasesChanged, this, &MainWindow::onMatchAliasesChanged);
     connect(m_slotEditor, &SlotEditorWidget::slotPathOverrideChanged, this, &MainWindow::onSlotPathOverrideChanged);
     connect(m_slotEditor, &SlotEditorWidget::flipNormalGRequested, this, &MainWindow::onFlipNormalG);
+    connect(m_slotEditor, &SlotEditorWidget::invertLinearRequested, this, &MainWindow::onInvertLinear);
+    connect(m_slotEditor, &SlotEditorWidget::coatSourceModeRequested, this, &MainWindow::onCoatSourceMode);
     connect(m_slotEditor, &SlotEditorWidget::autoDetectRequested, this, &MainWindow::onAutoDetect);
 }
 
@@ -1373,12 +1376,151 @@ void MainWindow::onRemoveTextureSet(int index)
     }
 }
 
+namespace
+{
+
+/// Runs the automatic pass over a set and describes what it changed.
+///
+/// Called after every slot assignment rather than on a timer: the pass needs both a
+/// normal and a displacement map to decide a green channel, and it needs the maps the
+/// user just dropped. It is idempotent, and once a decision is made the corresponding
+/// *Auto flag is cleared, so a second call does no further work.
+QString runAutoDefaults(tpbr::PBRTextureSet& set)
+{
+    const auto result = tpbr::applyAutoDefaults(set);
+    QStringList notes;
+    if (result.normalArbitrated)
+    {
+        notes << QObject::tr("normal %1 (G %2 · R %3)")
+                     .arg(result.normalFlipped ? QObject::tr("green flipped") : QObject::tr("green correct"))
+                     .arg(result.greenCorrelation, 0, 'f', 2)
+                     .arg(result.redCorrelation, 0, 'f', 2);
+    }
+    if (result.coatArbitrated)
+    {
+        notes << QObject::tr("coat normal %1").arg(result.coatFlipped ? QObject::tr("green flipped")
+                                                                     : QObject::tr("green correct"));
+    }
+    if (result.featuresChanged)
+    {
+        notes << QObject::tr("features enabled for the maps found");
+    }
+    return notes.join(QStringLiteral(" · "));
+}
+
+/// Shows an automatic-pass note without stealing the status line from the import message.
+void showAutoNote(QStatusBar* bar, const QString& note)
+{
+    if (bar && !note.isEmpty())
+    {
+        bar->showMessage(note, 12000);
+    }
+}
+
+} // namespace
+
+/// Visual transforms applied to a loaded image for preview only.
+///
+/// These mirror exactly what ModExporter writes: the normal's G flip and a per-texture linear
+/// inversion. Keeping them in one place is the point -- before this, the G flip was hand-written at
+/// three separate call sites, which is why a new per-texture transform could be added to the export
+/// and silently missing from every preview.
+void applyPreviewTransforms(QImage& image, const tpbr::TextureEntry& entry, bool flipG)
+{
+    if (!entry.invertLinear && !flipG)
+    {
+        return;
+    }
+    image = image.convertToFormat(QImage::Format_RGBA8888);
+    uint8_t* bits = image.bits();
+    const int count = image.width() * image.height();
+    for (int i = 0; i < count; ++i)
+    {
+        if (flipG)
+        {
+            bits[i * 4 + 1] = static_cast<uint8_t>(255 - bits[i * 4 + 1]);
+        }
+        if (entry.invertLinear)
+        {
+            for (int c = 0; c < 4; ++c)
+            {
+                bits[i * 4 + c] = static_cast<uint8_t>(255 - bits[i * 4 + c]);
+            }
+        }
+    }
+}
+
+void applyPreviewTransforms(std::vector<uint8_t>& pixels, const tpbr::TextureEntry& entry, bool flipG)
+{
+    if (!entry.invertLinear && !flipG)
+    {
+        return;
+    }
+    const size_t count = pixels.size() / 4;
+    for (size_t i = 0; i < count; ++i)
+    {
+        if (flipG)
+        {
+            pixels[i * 4 + 1] = static_cast<uint8_t>(255 - pixels[i * 4 + 1]);
+        }
+        if (entry.invertLinear)
+        {
+            for (int c = 0; c < 4; ++c)
+            {
+                pixels[i * 4 + c] = static_cast<uint8_t>(255 - pixels[i * 4 + c]);
+            }
+        }
+    }
+}
+
+/// Directory to open a picker in: the folder of whatever already occupies that slot, else the last
+/// one this session used. Preloading a folder and then choosing which mask belongs in a slot is a
+/// normal workflow, so the picker should start where the work already is instead of wherever the
+/// dialog last happened to be.
+QString startDirFor(const tpbr::PBRTextureSet& set, tpbr::PBRTextureSlot slot)
+{
+    const auto it = set.textures.find(slot);
+    if (it != set.textures.end() && !it->second.sourcePath.empty())
+    {
+        const QString dir = QString::fromStdString(it->second.sourcePath.parent_path().string());
+        if (!dir.isEmpty())
+        {
+            return dir;
+        }
+    }
+    // Fall back to a sibling already loaded in this set, so a fresh slot still lands in the right place.
+    for (const auto& [otherSlot, entry] : set.textures)
+    {
+        (void)otherSlot;
+        if (!entry.sourcePath.empty())
+        {
+            return QString::fromStdString(entry.sourcePath.parent_path().string());
+        }
+    }
+    return {};
+}
+
+QString startDirForChannel(const tpbr::PBRTextureSet& set, tpbr::ChannelMap channel)
+{
+    const auto it = set.channelMaps.find(channel);
+    if (it != set.channelMaps.end() && !it->second.sourcePath.empty())
+    {
+        const QString dir = QString::fromStdString(it->second.sourcePath.parent_path().string());
+        if (!dir.isEmpty())
+        {
+            return dir;
+        }
+    }
+    return startDirFor(set, tpbr::PBRTextureSlot::RMAOS);
+}
+
 void MainWindow::onImportTexture(PBRTextureSlot slot)
 {
     if (m_currentSetIndex < 0)
         return;
 
-    auto path = QFileDialog::getOpenFileName(this, tr("Import %1").arg(slotDisplayName(slot)), QString(),
+    auto path = QFileDialog::getOpenFileName(this, tr("Import %1").arg(slotDisplayName(slot)),
+                                             startDirFor(m_project.textureSets[m_currentSetIndex], slot),
                                              TextureImporter::fileFilter());
 
     if (path.isEmpty())
@@ -1391,6 +1533,7 @@ void MainWindow::onImportTexture(PBRTextureSlot slot)
     }
     m_project.textureSets[m_currentSetIndex].textures[slot] = entry;
 
+    const QString autoNote = runAutoDefaults(m_project.textureSets[m_currentSetIndex]);
     m_slotEditor->setTextureSet(m_project.textureSets[m_currentSetIndex]);
     refreshPreview();
     statusBar()->showMessage(tr("Imported %1: %2 (%3x%4)")
@@ -1398,6 +1541,7 @@ void MainWindow::onImportTexture(PBRTextureSlot slot)
                                  .arg(QString::fromStdString(entry.sourcePath.filename().string()))
                                  .arg(entry.width)
                                  .arg(entry.height));
+    showAutoNote(statusBar(), autoNote);
 }
 
 void MainWindow::onImportChannel(ChannelMap channel)
@@ -1407,8 +1551,9 @@ void MainWindow::onImportChannel(ChannelMap channel)
 
     const char* name = channelDisplayName(channel);
 
-    auto path =
-        QFileDialog::getOpenFileName(this, tr("Import %1 Channel").arg(name), QString(), TextureImporter::fileFilter());
+    auto path = QFileDialog::getOpenFileName(this, tr("Import %1 Channel").arg(name),
+                                             startDirForChannel(m_project.textureSets[m_currentSetIndex], channel),
+                                             TextureImporter::fileFilter());
 
     if (path.isEmpty())
         return;
@@ -1558,6 +1703,7 @@ void MainWindow::onBatchImport()
         ts.rmaosSourceMode = RMAOSSourceMode::SeparateChannels;
     }
 
+    const QString autoNote = runAutoDefaults(ts);
     m_slotEditor->setTextureSet(ts);
     m_featurePanel->setFeatures(ts.features);
     refreshPreview();
@@ -1568,6 +1714,7 @@ void MainWindow::onBatchImport()
         msg += tr(", %1 unmatched").arg(static_cast<int>(scanResult.unmatched.size()));
     }
     statusBar()->showMessage(msg);
+    showAutoNote(statusBar(), autoNote);
 
     if (imported == 0)
     {
@@ -1808,6 +1955,7 @@ void MainWindow::onDroppedOnSlot(PBRTextureSlot slot, const QString& filePath)
     }
     m_project.textureSets[m_currentSetIndex].textures[slot] = entry;
 
+    const QString autoNote = runAutoDefaults(m_project.textureSets[m_currentSetIndex]);
     m_slotEditor->setTextureSet(m_project.textureSets[m_currentSetIndex]);
     refreshPreview();
     statusBar()->showMessage(tr("Dropped %1: %2 (%3x%4)")
@@ -1815,6 +1963,7 @@ void MainWindow::onDroppedOnSlot(PBRTextureSlot slot, const QString& filePath)
                                  .arg(QString::fromStdString(entry.sourcePath.filename().string()))
                                  .arg(entry.width)
                                  .arg(entry.height));
+    showAutoNote(statusBar(), autoNote);
 }
 
 void MainWindow::onDroppedOnChannel(ChannelMap channel, const QString& filePath)
@@ -1858,14 +2007,7 @@ void MainWindow::onSlotPreviewRequested(PBRTextureSlot slot)
     }
 
     // Apply runtime Normal G flip if enabled
-    if (slot == PBRTextureSlot::Normal && ts.flipNormalG)
-    {
-        image = image.convertToFormat(QImage::Format_RGBA8888);
-        uint8_t* bits = image.bits();
-        const int count = image.width() * image.height();
-        for (int i = 0; i < count; ++i)
-            bits[i * 4 + 1] = 255 - bits[i * 4 + 1];
-    }
+    applyPreviewTransforms(image, it->second, slot == PBRTextureSlot::Normal && ts.flipNormalG);
 
     m_previewWidget->setImage(image);
     // Show channel selector for multi-channel data textures (RMAOS, CoatNormalRoughness, Fuzz, Subsurface)
@@ -2091,11 +2233,84 @@ void MainWindow::onFlipNormalG()
 
     auto& ts = m_project.textureSets[m_currentSetIndex];
     ts.flipNormalG = !ts.flipNormalG;
+    // The user has now decided, so the automatic pass must never overrule it.
+    ts.flipNormalGAuto = false;
 
     // Refresh UI and preview to reflect the new state
     m_slotEditor->setTextureSet(ts);
     refreshPreview();
     statusBar()->showMessage(tr("Flipped Normal G channel"));
+}
+
+void MainWindow::onInvertLinear(tpbr::PBRTextureSlot slot)
+{
+    if (m_currentSetIndex < 0)
+        return;
+
+    auto& ts = m_project.textureSets[m_currentSetIndex];
+    auto entryIt = ts.textures.find(slot);
+    if (entryIt == ts.textures.end() || entryIt->second.sourcePath.empty())
+        return;
+
+    entryIt->second.invertLinear = !entryIt->second.invertLinear;
+
+    m_slotEditor->setTextureSet(ts);
+    refreshPreview();
+    statusBar()->showMessage(entryIt->second.invertLinear
+                                 ? tr("%1 will be exported inverted (v -> 255 - v)").arg(slotDisplayName(slot))
+                                 : tr("%1 inversion turned off").arg(slotDisplayName(slot)));
+}
+
+void MainWindow::onCoatSourceMode()
+{
+    if (m_currentSetIndex < 0)
+        return;
+
+    auto& ts = m_project.textureSets[m_currentSetIndex];
+
+    if (ts.coatSourceMode == CoatSourceMode::SeparateMaps)
+    {
+        // Back to the packed _cnr. The two files stay recorded, so switching back is free.
+        ts.coatSourceMode = CoatSourceMode::PackedTexture;
+        m_slotEditor->setTextureSet(ts);
+        refreshPreview();
+        statusBar()->showMessage(tr("Coat back to a single packed _cnr"));
+        return;
+    }
+
+    const auto normalPath = QFileDialog::getOpenFileName(this, tr("Coat Normal (RGB, alpha is dropped)"),
+                                                        QString(), TextureImporter::fileFilter());
+    if (normalPath.isEmpty())
+        return;
+
+    const auto roughPath = QFileDialog::getOpenFileName(this, tr("Coat Roughness (read from R)"), QString(),
+                                                       TextureImporter::fileFilter());
+    if (roughPath.isEmpty())
+        return;
+
+    int nw = 0, nh = 0, rw = 0, rh = 0;
+    int nc = 0, rc = 0;
+    if (!ImageUtils::getImageInfo(normalPath.toStdString(), nw, nh, nc) ||
+        !ImageUtils::getImageInfo(roughPath.toStdString(), rw, rh, rc))
+    {
+        QMessageBox::warning(this, tr("Coat Maps"), tr("One of the selected files could not be read."));
+        return;
+    }
+
+    ts.coatSourceMode = CoatSourceMode::SeparateMaps;
+    ts.coatMaps.normalPath = normalPath.toStdString();
+    ts.coatMaps.roughnessPath = roughPath.toStdString();
+    ts.coatMaps.normalWidth = nw;
+    ts.coatMaps.normalHeight = nh;
+    ts.coatMaps.roughnessWidth = rw;
+    ts.coatMaps.roughnessHeight = rh;
+
+    const QString autoNote = runAutoDefaults(ts);
+    m_slotEditor->setTextureSet(ts);
+    m_featurePanel->setFeatures(ts.features);
+    refreshPreview();
+    statusBar()->showMessage(tr("Coat normal + roughness taken from two files (%1x%2)").arg(nw).arg(nh));
+    showAutoNote(statusBar(), autoNote);
 }
 
 void MainWindow::onAutoDetect()
@@ -2209,6 +2424,7 @@ void MainWindow::onAutoDetect()
     }
 
     // Refresh UI
+    const QString autoNote = runAutoDefaults(ts);
     m_slotEditor->setTextureSet(ts);
     m_featurePanel->setFeatures(ts.features);
     refreshPreview();
@@ -2216,6 +2432,7 @@ void MainWindow::onAutoDetect()
     if (imported > 0)
     {
         statusBar()->showMessage(tr("Auto-detect: %1 textures imported").arg(imported));
+        showAutoNote(statusBar(), autoNote);
     }
     else
     {
@@ -2331,14 +2548,7 @@ void MainWindow::refreshPreview()
         }
 
         // Apply runtime Normal G flip if enabled
-        if (slot == PBRTextureSlot::Normal && set.flipNormalG)
-        {
-            image = image.convertToFormat(QImage::Format_RGBA8888);
-            uint8_t* bits = image.bits();
-            const int count = image.width() * image.height();
-            for (int i = 0; i < count; ++i)
-                bits[i * 4 + 1] = 255 - bits[i * 4 + 1];
-        }
+        applyPreviewTransforms(image, it->second, slot == PBRTextureSlot::Normal && set.flipNormalG);
 
         m_previewWidget->setImage(image);
         if (m_previewStack != nullptr)
@@ -2457,7 +2667,8 @@ void MainWindow::refresh3DPreview()
 
         w = cached->width;
         h = cached->height;
-        pixels = cached->rgbaPixels; // copy — 3D preview may mutate (e.g., Normal G flip)
+        pixels = cached->rgbaPixels; // copy -- the transforms below mutate it
+        applyPreviewTransforms(pixels, it->second, slot == PBRTextureSlot::Normal && set.flipNormalG);
         return true;
     };
 
@@ -2466,14 +2677,6 @@ void MainWindow::refresh3DPreview()
 
     loadPixels(ts, PBRTextureSlot::Diffuse, diffusePixels, dw, dh);
     loadPixels(ts, PBRTextureSlot::Normal, normalPixels, nw, nh);
-
-    // Apply runtime Normal G flip if enabled
-    if (ts.flipNormalG && !normalPixels.empty())
-    {
-        const int count = nw * nh;
-        for (int i = 0; i < count; ++i)
-            normalPixels[i * 4 + 1] = 255 - normalPixels[i * 4 + 1];
-    }
 
     // RMAOS: respect the authoring mode
     if (ts.rmaosSourceMode == RMAOSSourceMode::SeparateChannels && !ts.channelMaps.empty())

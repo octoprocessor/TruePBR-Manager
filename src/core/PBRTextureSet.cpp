@@ -321,4 +321,70 @@ std::vector<std::pair<int, int>> generateExportSizeOptions(int nativeWidth, int 
     return options;
 }
 
+const char* coatSourceModeKey(CoatSourceMode mode)
+{
+    switch (mode)
+    {
+    case CoatSourceMode::PackedTexture:
+        return "packed";
+    case CoatSourceMode::SeparateMaps:
+        return "separate";
+    default:
+        return "packed";
+    }
+}
+
+bool tryParseCoatSourceMode(const std::string& value, CoatSourceMode& mode)
+{
+    if (value == "packed")
+    {
+        mode = CoatSourceMode::PackedTexture;
+        return true;
+    }
+    if (value == "separate")
+    {
+        mode = CoatSourceMode::SeparateMaps;
+        return true;
+    }
+
+    return false;
+}
+
+PBRFeatureFlags normaliseFeatureFlags(PBRFeatureFlags flags)
+{
+    // hair dominates: it owns BACK_LIGHTING, which the coat normal also drives.
+    if (flags.hair)
+    {
+        flags.emissive = false;
+        flags.parallax = false;
+        flags.subsurface = false;
+        flags.subsurfaceFoliage = false;
+        flags.multilayer = false;
+        flags.coatDiffuse = false;
+        flags.coatParallax = false;
+        flags.coatNormal = false;
+        flags.fuzz = false;
+        flags.glint = false;
+        return flags;
+    }
+
+    // multilayer, glint and fuzz are one else-if chain in the patcher: one shader, one winner.
+    if (flags.multilayer)
+    {
+        flags.glint = false;
+        flags.fuzz = false;
+        flags.subsurface = false;
+        flags.subsurfaceFoliage = false;
+    }
+
+    if (flags.fuzz)
+    {
+        flags.glint = false;
+        // fuzz overwrites the multilayer texture slot that the coat normal needs
+        flags.coatNormal = false;
+    }
+
+    return flags;
+}
+
 } // namespace tpbr
